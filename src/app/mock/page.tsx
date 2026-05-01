@@ -51,7 +51,7 @@ function Navbar({ onBack, title, sub }: { onBack?: () => void; title?: string; s
   return (
     <nav className="h-[50px] bg-[#080c14] flex items-center justify-between px-4 shadow-[0_1px_0_rgba(255,255,255,0.04),0_4px_16px_rgba(0,0,0,0.6)]">
       <div className="flex items-center gap-2.5">
-        <img src="/logo.png" alt="ScoutPlay" className="h-7 w-auto flex-shrink-0" />
+        <img src="/images/logo.png" alt="ScoutPlay" className="h-7 w-auto flex-shrink-0" />
         <div>
           {title
             ? <><p className="text-white text-sm font-medium leading-tight">{title}</p>
