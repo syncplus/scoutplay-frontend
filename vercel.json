@@ -5,6 +5,6 @@
   "installCommand": "npm ci",
   "regions": ["gru1"],
   "env": {
-    "NEXT_PUBLIC_API_URL": "@api_url"
+    "NEXT_PUBLIC_API_URL": "https://api.seudominio.com/api/v1"
   }
 }
