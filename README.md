@@ -22,10 +22,6 @@ Interface web para análise de ataques no Futevôlei.
 src/
 ├── app/                        # Rotas (App Router)
 │   ├── auth/login/             # Tela de login
-│   ├── partidas/               # Lista de partidas
-│   │   └── [id]/
-│   │       ├── registrar/      # Registro de ataques
-│   │       └── dashboard/      # Estatísticas
 │   └── dashboard/              # Painel admin
 │
 ├── components/
@@ -36,24 +32,17 @@ src/
 │   └── dashboard/              # StatsCards, Gráficos, Mapa
 │
 ├── services/                   # Chamadas à API (1 arquivo por recurso)
-│   ├── auth.service.ts
-│   ├── partidas.service.ts
-│   └── ataques.service.ts
 │
 ├── store/                      # Zustand stores
-│   ├── auth.store.ts
-│   └── partida.store.ts
 │
 ├── hooks/                      # Custom hooks
-│   ├── useTimer.ts
-│   └── usePartida.ts
 │
 ├── lib/
 │   ├── api/                    # Axios client + endpoints
 │   ├── utils/                  # Helpers (cn, formatTimer, etc.)
 │   └── validations/            # Schemas Zod
 │
-└── types/index.ts              # Todos os tipos TypeScript
+└── types/.                     # Todos os tipos TypeScript
 ```
 
 ---
