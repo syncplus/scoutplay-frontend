@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - '3000:3000'
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://backend:8000/api/v1}
+      - NODE_ENV=production
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - scout-network
+
+  # Placeholder — substitua pelo seu backend FastAPI/Django
+  backend:
+    image: tiangolo/uvicorn-gunicorn-fastapi:python3.11
+    ports:
+      - '8000:80'
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - SECRET_KEY=${SECRET_KEY}
+    networks:
+      - scout-network
+
+networks:
+  scout-network:
+    driver: bridge

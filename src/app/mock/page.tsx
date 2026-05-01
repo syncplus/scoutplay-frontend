@@ -1,0 +1,762 @@
+'use client'
+
+import { useState, useEffect, useRef, useCallback } from 'react'
+
+type Status = 'wait' | 'prog' | 'done'
+type Tipo = 'cabeca' | 'shark'
+type Qual = 'boa' | 'media' | 'ruim'
+type Zona = 'Z1'|'Z2'|'Z3'|'Z4'|'Z5'|'Z6'|'Z7'|'Z8'|'Z9'
+
+interface Partida {
+  id: string; jogador: string; adversario?: string; fase: string
+  lado: 'Esq' | 'Dir'; status: Status; data: string; ataques: number; tempo: number
+}
+interface Ataque {
+  id: number; tipo: Tipo; qualidade: Qual; px: number; py: number; zona: Zona
+}
+interface SetResult { num: number; nos: number; them: number }
+
+const INITIAL_PARTIDAS: Partida[] = [
+  { id:'1', jogador:'Avatar e Gaúcho',  adversario:'Gabrielzinho e Pedrin', fase:'Semi final 1', lado:'Esq', status:'prog', data:'25 abr', ataques:25, tempo:1934 },
+  { id:'2', jogador:'Felipe Ice',        adversario:'Longo e Vitinho',        fase:'Grupo',       lado:'Esq', status:'wait', data:'28 abr', ataques:0,  tempo:0    },
+  { id:'3', jogador:'Lucao e Matheus',  adversario:'João e Iuri',            fase:'Final',       lado:'Dir', status:'done', data:'24 abr', ataques:17, tempo:2467 },
+  { id:'4', jogador:'Kuka e Torres',    adversario:'Avatar e Gaúcho',        fase:'Grupo',       lado:'Dir', status:'wait', data:'28 abr', ataques:0,  tempo:0    },
+  { id:'5', jogador:'Dudu e Arthur',    adversario:'Tavinho e Amauri',       fase:'Grupo',       lado:'Dir', status:'done', data:'25 abr', ataques:16, tempo:1735 },
+]
+
+const ZONES: { code: Zona; abbr: string }[] = [
+  {code:'Z1',abbr:'PT'},{code:'Z2',abbr:'PM'},{code:'Z3',abbr:'DC'},
+  {code:'Z4',abbr:'PP'},{code:'Z5',abbr:'PA'},{code:'Z6',abbr:'DP'},
+  {code:'Z7',abbr:'LP'},{code:'Z8',abbr:'MF'},{code:'Z9',abbr:'DL'},
+]
+const ZONE_COL: Record<Zona,number> = {Z1:0,Z2:0,Z3:0,Z4:1,Z5:1,Z6:1,Z7:2,Z8:2,Z9:2}
+const ZONE_ROW: Record<Zona,number> = {Z1:0,Z4:0,Z7:0,Z2:1,Z5:1,Z8:1,Z3:2,Z6:2,Z9:2}
+const ZONE_ABBR: Record<Zona,string> = {Z1:'PT',Z2:'PM',Z3:'DC',Z4:'PP',Z5:'PA',Z6:'DP',Z7:'LP',Z8:'MF',Z9:'DL'}
+const QUAL_COLORS: Record<Qual,string> = { boa:'#22c55e', media:'#f97316', ruim:'#ef4444' }
+const TIPO_STROKE: Record<Tipo,string> = { cabeca:'#F0A500', shark:'#a855f7' }
+const QUAL_LABEL: Record<Qual,string> = { boa:'Boa', media:'Média', ruim:'Ruim' }
+const TIPO_LABEL: Record<Tipo,string> = { cabeca:'Cabeça', shark:'Shark' }
+const pad = (n: number) => String(n).padStart(2,'0')
+const fmtTime = (s: number) => `${pad(Math.floor(s/60))}:${pad(s%60)}`
+
+function statusLabel(s: Status) { return { prog:'Em progresso', wait:'Aguardando', done:'Finalizada' }[s] }
+function statusStripe(s: Status) { return { prog:'#16a34a', wait:'#f59e0b', done:'#F0A500' }[s] }
+function statusPillClass(s: Status) {
+  return { prog:'bg-green-900/40 text-green-400', wait:'bg-amber-900/40 text-amber-400', done:'bg-yellow-900/40 text-yellow-400' }[s]
+}
+function statusDot(s: Status) { return { prog:'bg-green-500', wait:'bg-amber-400', done:'bg-yellow-400' }[s] }
+
+/* ── NAVBAR ─────────────────────────────────────────────────────── */
+function Navbar({ onBack, title, sub }: { onBack?: () => void; title?: string; sub?: string }) {
+  return (
+    <nav className="h-[50px] bg-[#080c14] flex items-center justify-between px-4 shadow-[0_1px_0_rgba(255,255,255,0.04),0_4px_16px_rgba(0,0,0,0.6)]">
+      <div className="flex items-center gap-2.5">
+        <img src="/logo.png" alt="ScoutPlay" className="h-7 w-auto flex-shrink-0" />
+        <div>
+          {title
+            ? <><p className="text-white text-sm font-medium leading-tight">{title}</p>
+                <p className="text-white/40 text-[10px]">{sub}</p></>
+            : <><p className="text-white text-sm font-medium">ScoutPlay</p>
+                <p className="text-white/35 text-[10px]">Futevôlei · análise de ataques</p></>
+          }
+        </div>
+      </div>
+      {onBack
+        ? <button onClick={onBack} className="flex items-center gap-1 bg-white/8 text-white/70 text-xs px-3 py-1.5 rounded-lg hover:bg-white/15 transition-colors">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M8 2L4 6l4 4"/></svg>
+            Partidas
+          </button>
+        : <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-full bg-[#F0A500]/20 flex items-center justify-center text-[#F0A500] text-[10px] font-medium">TC</div>
+            <span className="text-white/60 text-xs">Treinador</span>
+          </div>
+      }
+    </nav>
+  )
+}
+
+/* ── MODAL NOVA PARTIDA ─────────────────────────────────────────── */
+function ModalNovaPartida({ onClose, onCreate }: { onClose: () => void; onCreate: (p: Partida) => void }) {
+  const [jogador, setJogador] = useState('')
+  const [adversario, setAdversario] = useState('')
+  const [fase, setFase] = useState('')
+  const [lado, setLado] = useState<'Esq'|'Dir'>('Esq')
+  const [data, setData] = useState(new Date().toISOString().slice(0,10))
+
+  function handleCreate() {
+    if (!jogador || !fase) return
+    onCreate({ id: String(Date.now()), jogador, adversario, fase, lado, status:'wait', data: data.slice(5).replace('-',' '), ataques:0, tempo:0 })
+    onClose()
+  }
+
+  const inputCls = "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 outline-none focus:border-[#F0A500]/60 transition-colors"
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+      <div className="bg-[#0f1626] rounded-2xl w-full max-w-md shadow-[0_8px_48px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.07)]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
+          <h2 className="text-base font-semibold text-white">Nova partida</h2>
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg bg-white/8 text-white/50 hover:bg-white/15 transition-colors text-lg leading-none">×</button>
+        </div>
+        <div className="px-5 py-4 space-y-4">
+          <div>
+            <label className="text-[11px] text-white/40 uppercase tracking-wide block mb-1.5">Jogador / Dupla analisada</label>
+            <input className={inputCls} placeholder="Ex: Avatar e Gaúcho" value={jogador} onChange={e=>setJogador(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-[11px] text-white/40 uppercase tracking-wide block mb-1.5">Partida / Fase</label>
+            <input className={inputCls} placeholder="Ex: Semi final 1" value={fase} onChange={e=>setFase(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[11px] text-white/40 uppercase tracking-wide block mb-1.5">Data</label>
+              <input type="date" className={inputCls} value={data} onChange={e=>setData(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-[11px] text-white/40 uppercase tracking-wide block mb-1.5">Lado</label>
+              <div className="flex border border-white/10 rounded-lg overflow-hidden">
+                {(['Esq','Dir'] as const).map(l => (
+                  <button key={l} onClick={()=>setLado(l)} className={`flex-1 py-2 text-xs font-medium transition-colors ${lado===l ? 'bg-[#F0A500] text-white' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}>
+                    {l==='Esq' ? 'Esquerda' : 'Direita'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div>
+            <label className="text-[11px] text-white/40 uppercase tracking-wide block mb-1.5">Adversário (opcional)</label>
+            <input className={inputCls} placeholder="Ex: João e Iuri" value={adversario} onChange={e=>setAdversario(e.target.value)} />
+          </div>
+        </div>
+        <div className="flex gap-2 justify-end px-5 pb-5">
+          <button onClick={onClose} className="bg-transparent border border-white/15 text-white/60 px-5 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors">Cancelar</button>
+          <button onClick={handleCreate} className="bg-[#F0A500] text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-[#D4920A] transition-colors">Criar partida</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ── PARTIDA CARD ───────────────────────────────────────────────── */
+function PartidaCard({ p, onOpen, onDelete }: { p: Partida; onOpen: (p: Partida) => void; onDelete: (id: string) => void }) {
+  return (
+    <div className="bg-[#0f1626] rounded-xl overflow-hidden transition-all shadow-[0_4px_24px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(255,255,255,0.05)] hover:shadow-[0_6px_32px_rgba(0,0,0,0.75),inset_0_1px_0_rgba(255,255,255,0.08)] hover:-translate-y-0.5">
+      <div style={{ height:4, background: statusStripe(p.status) }} />
+      {p.status === 'prog' && (
+        <div className="h-0.5 bg-white/8"><div className="w-1/2 h-full bg-green-500" /></div>
+      )}
+      <div className="px-4 pt-3 pb-2.5 border-b border-white/5">
+        <div className="flex items-center justify-between mb-2">
+          <span className={`inline-flex items-center gap-1.5 text-[10px] px-2.5 py-1 rounded-full font-medium ${statusPillClass(p.status)}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${statusDot(p.status)}`} />
+            {statusLabel(p.status)}
+          </span>
+          <span className="text-[10px] text-white/30 font-mono">{fmtTime(p.tempo)}</span>
+        </div>
+        <p className="text-sm font-medium text-white mb-0.5">{p.jogador}</p>
+        {p.adversario && <p className="text-[11px] text-white/40">vs {p.adversario}</p>}
+      </div>
+      <div className="px-4 py-2.5 flex items-center justify-between">
+        <div className="flex gap-1.5">
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${p.lado==='Esq' ? 'bg-indigo-900/50 text-indigo-300' : 'bg-pink-900/50 text-pink-300'}`}>{p.lado}</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/8 text-white/40">{p.data}</span>
+        </div>
+        <div className="text-right">
+          <p className={`text-lg font-medium leading-none ${p.ataques===0 ? 'text-amber-400' : 'text-[#F0A500]'}`}>{p.ataques}</p>
+          <p className="text-[9px] text-white/30">ataques</p>
+        </div>
+      </div>
+      <div className="px-4 pb-4 flex gap-2 items-stretch">
+        <button onClick={() => onOpen(p)}
+          className="flex-1 bg-green-600 text-white text-xs font-medium py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 hover:bg-green-700 active:scale-95 transition-all">
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M6 2H3a1 1 0 00-1 1v8a1 1 0 001 1h8a1 1 0 001-1V8"/><path d="M9 2h3v3"/><path d="M13 1L7 7"/>
+          </svg>
+          Abrir
+        </button>
+        <button onClick={() => onDelete(p.id)}
+          className="w-10 bg-red-900/50 text-red-400 rounded-lg flex items-center justify-center hover:bg-red-900/70 active:scale-95 transition-all self-stretch border border-red-900/40">
+          <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="3,5 4,5 15,5"/>
+            <path d="M6 5V3a1 1 0 011-1h4a1 1 0 011 1v2"/>
+            <path d="M14 5l-.867 10.142A2 2 0 0111.138 17H6.862a2 2 0 01-1.995-1.858L4 5"/>
+            <line x1="8" y1="9" x2="8" y2="13"/><line x1="10" y1="9" x2="10" y2="13"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ── HOME ───────────────────────────────────────────────────────── */
+function HomeScreen({ onOpen }: { onOpen: (p: Partida) => void }) {
+  const [partidas, setPartidas] = useState<Partida[]>(INITIAL_PARTIDAS)
+  const [filtro, setFiltro] = useState<'all'|Status>('all')
+  const [modalOpen, setModalOpen] = useState(false)
+
+  const counts = {
+    all: partidas.length,
+    wait: partidas.filter(p=>p.status==='wait').length,
+    prog: partidas.filter(p=>p.status==='prog').length,
+    done: partidas.filter(p=>p.status==='done').length,
+  }
+  const filtered = filtro === 'all' ? partidas : partidas.filter(p=>p.status===filtro)
+  const tabs: { key: 'all'|Status; label: string }[] = [
+    {key:'all',label:'Tudo'},{key:'wait',label:'Aguardando'},{key:'prog',label:'Em progresso'},{key:'done',label:'Finalizada'},
+  ]
+  const badgeActive: Record<string,string> = {
+    all:'bg-white/20 text-white', wait:'bg-amber-900/60 text-amber-300',
+    prog:'bg-green-900/60 text-green-300', done:'bg-yellow-900/60 text-yellow-300',
+  }
+
+  return (
+    <div className="min-h-screen bg-[#080c14]">
+      <Navbar />
+      <div className="max-w-5xl mx-auto px-4 py-6">
+        <div className="flex items-center justify-between mb-5">
+          <h1 className="text-xl font-semibold text-white">Partidas</h1>
+          <button onClick={() => setModalOpen(true)}
+            className="bg-[#F0A500] text-white text-xs font-medium px-4 py-2 rounded-lg flex items-center gap-1.5 hover:bg-[#D4920A] transition-colors">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M6 1v10M1 6h10"/></svg>
+            Nova partida
+          </button>
+        </div>
+        <div className="flex gap-2 flex-wrap mb-5">
+          {tabs.map(t => (
+            <button key={t.key} onClick={() => setFiltro(t.key)}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all ${filtro===t.key ? 'bg-[#F0A500] text-white' : 'bg-white/5 border border-white/10 text-white/50 hover:border-white/20'}`}>
+              {t.label}
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${filtro===t.key ? 'bg-white/20 text-white' : (badgeActive[t.key]||'bg-white/8 text-white/40')}`}>
+                {counts[t.key as keyof typeof counts]}
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {filtered.map(p => (
+            <PartidaCard key={p.id} p={p} onOpen={onOpen} onDelete={id => setPartidas(prev => prev.filter(x => x.id !== id))} />
+          ))}
+        </div>
+      </div>
+      {modalOpen && (
+        <ModalNovaPartida onClose={() => setModalOpen(false)} onCreate={nova => { setPartidas(prev => [nova, ...prev]); setModalOpen(false) }} />
+      )}
+    </div>
+  )
+}
+
+/* ── TIMER STRIP ────────────────────────────────────────────────── */
+function TimerStrip({ partidaId }: { partidaId: string }) {
+  const [secs, setSecs] = useState(0)
+  const [running, setRunning] = useState(false)
+  const [pauses, setPauses] = useState(0)
+  const [finished, setFinished] = useState(false)
+  const ivRef = useRef<NodeJS.Timeout|null>(null)
+
+  useEffect(() => {
+    if (running) { ivRef.current = setInterval(() => setSecs(s => s + 1), 1000) }
+    else { if (ivRef.current) clearInterval(ivRef.current) }
+    return () => { if (ivRef.current) clearInterval(ivRef.current) }
+  }, [running])
+
+  const color = finished ? 'text-[#F0A500]' : running ? 'text-green-400' : secs > 0 ? 'text-amber-400' : 'text-white/30'
+  const btnCls = (bg: string, disabled: boolean) =>
+    `text-xs font-medium px-4 py-1.5 rounded-lg border-none transition-all ${disabled ? 'bg-white/7 text-white/25 cursor-not-allowed' : `${bg} text-white cursor-pointer hover:opacity-90`}`
+
+  return (
+    <div className="bg-[#080c14] px-4 py-3 shadow-[0_1px_0_rgba(255,255,255,0.04),0_4px_12px_rgba(0,0,0,0.5)]">
+      <div className="text-center mb-2.5">
+        <p className="text-[10px] text-white/35 uppercase tracking-widest mb-1">Tempo de partida</p>
+        <p className={`text-3xl font-medium font-mono tracking-widest ${color}`}>{fmtTime(secs)}</p>
+      </div>
+      <div className="flex gap-2 justify-center">
+        <button onClick={() => setRunning(true)} disabled={running || secs > 0 || finished} className={btnCls('bg-green-600', running || secs > 0 || finished)}>Iniciar</button>
+        {running
+          ? <button onClick={() => { setRunning(false); setPauses(p => p + 1) }} className={btnCls('bg-amber-600', false)}>Pausar</button>
+          : <button onClick={() => setRunning(true)} disabled={secs === 0 || finished} className={btnCls('bg-[#F0A500]', secs === 0 || finished)}>Retomar</button>
+        }
+        <button onClick={() => { setRunning(false); setFinished(true) }} disabled={secs === 0 || finished} className={btnCls('bg-red-600', secs === 0 || finished)}>Finalizar</button>
+      </div>
+      <p className="text-center text-white/30 text-[10px] mt-2">
+        {finished ? `Finalizada · ${fmtTime(secs)} · ${pauses} pausa(s)` : running ? `Em andamento · ${pauses} pausa(s)` : secs > 0 ? `Pausado · ${pauses} pausa(s)` : 'Partida não iniciada'}
+      </p>
+    </div>
+  )
+}
+
+/* ── PLACAR ─────────────────────────────────────────────────────── */
+function PlacarSection({ jogador, adversario }: { jogador: string; adversario?: string }) {
+  const [nos, setNos] = useState(0)
+  const [them, setThem] = useState(0)
+  const [sets, setSets] = useState<SetResult[]>([])
+  const [setNum, setSetNum] = useState(1)
+
+  function finalizarSet() {
+    setSets(s => [...s, { num: setNum, nos, them }])
+    setSetNum(n => n + 1); setNos(0); setThem(0)
+  }
+
+  const ScoreBtn = ({ onClick, bg, children }: { onClick: () => void; bg: string; children: React.ReactNode }) => (
+    <button onClick={onClick} className={`w-9 h-9 ${bg} text-white rounded-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all border-none cursor-pointer`}>
+      {children}
+    </button>
+  )
+
+  return (
+    <div className="bg-[#0a0e1a] px-4 py-3 shadow-[0_1px_0_rgba(255,255,255,0.04),0_4px_12px_rgba(0,0,0,0.5)]">
+      <p className="text-[10px] text-white/35 uppercase tracking-widest text-center mb-3">Placar</p>
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+        <div className="text-center">
+          <p className="text-[11px] text-green-400 font-medium mb-1.5 truncate">{jogador}</p>
+          <p className="text-[42px] font-medium text-white font-mono leading-none">{nos}</p>
+          <div className="flex gap-1.5 justify-center mt-2.5">
+            <ScoreBtn onClick={() => setNos(n => n + 1)} bg="bg-green-600">
+              <svg width="16" height="16" viewBox="0 0 16 16" stroke="white" strokeWidth="2.5" strokeLinecap="round" fill="none"><path d="M8 2v12M2 8h12"/></svg>
+            </ScoreBtn>
+            <ScoreBtn onClick={() => setNos(n => Math.max(0, n - 1))} bg="bg-white/10">
+              <svg width="16" height="16" viewBox="0 0 16 16" stroke="rgba(255,255,255,0.7)" strokeWidth="2.5" strokeLinecap="round" fill="none"><path d="M2 8h12"/></svg>
+            </ScoreBtn>
+          </div>
+        </div>
+        <div className="text-center">
+          <p className="text-2xl font-medium text-white/20">×</p>
+          <p className="text-[9px] text-white/25 mt-1">SET {setNum}</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[11px] text-red-400 font-medium mb-1.5 truncate">{adversario || 'Adversário'}</p>
+          <p className="text-[42px] font-medium text-white font-mono leading-none">{them}</p>
+          <div className="flex gap-1.5 justify-center mt-2.5">
+            <ScoreBtn onClick={() => setThem(n => n + 1)} bg="bg-red-600">
+              <svg width="16" height="16" viewBox="0 0 16 16" stroke="white" strokeWidth="2.5" strokeLinecap="round" fill="none"><path d="M8 2v12M2 8h12"/></svg>
+            </ScoreBtn>
+            <ScoreBtn onClick={() => setThem(n => Math.max(0, n - 1))} bg="bg-white/10">
+              <svg width="16" height="16" viewBox="0 0 16 16" stroke="rgba(255,255,255,0.7)" strokeWidth="2.5" strokeLinecap="round" fill="none"><path d="M2 8h12"/></svg>
+            </ScoreBtn>
+          </div>
+        </div>
+      </div>
+      {sets.length > 0 && (
+        <div className="mt-3 border-t border-white/7 pt-2.5">
+          <p className="text-[10px] text-white/30 text-center mb-1.5">Histórico de sets</p>
+          <div className="flex gap-2 justify-center flex-wrap">
+            {sets.map(s => (
+              <span key={s.num} className="bg-white/8 rounded-md px-2.5 py-1 text-[11px] text-white/70 font-mono">
+                Set {s.num}: {s.nos}×{s.them}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="mt-2.5 flex justify-center">
+        <button onClick={finalizarSet} className="text-white/55 hover:text-white/80 text-[11px] bg-white/7 hover:bg-white/12 px-3 py-1.5 rounded-lg transition-all border-none cursor-pointer">
+          Finalizar set e iniciar próximo
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ── QUADRA CANVAS ──────────────────────────────────────────────── */
+function QuadraCanvas({ ataques, posAtual, onPos }: { ataques: Ataque[]; posAtual: {x:number;y:number;px:number;py:number}|null; onPos: (p:{x:number;y:number;px:number;py:number}) => void }) {
+  const areaRef = useRef<HTMLDivElement>(null)
+  const cvRef = useRef<HTMLCanvasElement>(null)
+
+  const draw = useCallback(() => {
+    const cv = cvRef.current; const area = areaRef.current
+    if (!cv || !area) return
+    cv.width = area.offsetWidth; cv.height = area.offsetHeight
+    const ctx = cv.getContext('2d')!
+    ctx.clearRect(0, 0, cv.width, cv.height)
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 0.5; ctx.setLineDash([4, 3])
+    for (let i = 1; i < 3; i++) {
+      ctx.beginPath(); ctx.moveTo(0, cv.height * i / 3); ctx.lineTo(cv.width, cv.height * i / 3); ctx.stroke()
+    }
+    ctx.setLineDash([])
+    ataques.forEach(a => {
+      const ax = (a.px / 100) * cv.width, ay = (a.py / 100) * cv.height
+      ctx.beginPath(); ctx.arc(ax, ay, 5, 0, Math.PI * 2)
+      ctx.fillStyle = QUAL_COLORS[a.qualidade]; ctx.fill()
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.5; ctx.stroke()
+    })
+    if (posAtual) {
+      const { x, y } = posAtual
+      ctx.beginPath(); ctx.arc(x, y, 13, 0, Math.PI * 2); ctx.fillStyle = 'rgba(240,165,0,0.2)'; ctx.fill()
+      ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fillStyle = '#F0A500'; ctx.fill()
+      ctx.strokeStyle = 'white'; ctx.lineWidth = 2; ctx.stroke()
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3])
+      ctx.beginPath(); ctx.moveTo(x - 14, y); ctx.lineTo(x + 14, y); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(x, y - 14); ctx.lineTo(x, y + 14); ctx.stroke()
+      ctx.setLineDash([])
+    }
+  }, [ataques, posAtual])
+
+  useEffect(() => { draw() }, [draw])
+
+  function handleClick(e: React.MouseEvent<HTMLDivElement>) {
+    const area = areaRef.current; if (!area) return
+    const r = area.getBoundingClientRect()
+    const x = e.clientX - r.left, y = e.clientY - r.top
+    onPos({ x, y, px: Math.round(x / r.width * 100), py: Math.round(y / r.height * 100) })
+  }
+
+  return (
+    <div ref={areaRef} onClick={handleClick} className="bg-[#c8a96e] relative min-h-[150px] cursor-crosshair select-none">
+      <canvas ref={cvRef} className="absolute inset-0 w-full h-full" />
+    </div>
+  )
+}
+
+/* ── ZONE GRID ──────────────────────────────────────────────────── */
+function ZoneGrid({ zonaSel, ataques, onSelect }: { zonaSel: Zona|null; ataques: Ataque[]; onSelect: (z: Zona) => void }) {
+  const counts = ataques.reduce<Record<string,number>>((acc, a) => ({ ...acc, [a.zona]: (acc[a.zona] || 0) + 1 }), {})
+  return (
+    <div className="bg-[#c8a96e] p-1.5">
+      <div className="grid grid-cols-3 gap-0.5">
+        {ZONES.map(({ code, abbr }) => {
+          const cnt = counts[code] || 0
+          const sel = zonaSel === code
+          const hit = cnt > 0
+          return (
+            <button key={code} onClick={() => onSelect(code)}
+              className="rounded flex flex-col items-center justify-center min-h-[46px] border-[1.5px] transition-all py-1 cursor-pointer"
+              style={{
+                borderColor: sel ? '#F0A500' : 'transparent',
+                background: sel ? 'rgba(240,165,0,0.75)' : hit ? 'rgba(22,163,74,0.55)' : 'rgba(255,255,255,0.22)',
+              }}>
+              <span className="text-[9px] text-white/90 font-semibold leading-none">{code}</span>
+              <span className="text-[8px] text-white/70 leading-none mt-0.5">{abbr}</span>
+              {cnt > 0 && <span className="text-[13px] text-white font-medium leading-none mt-0.5">{cnt}</span>}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/* ── REGISTRAR TAB ──────────────────────────────────────────────── */
+function RegistrarTab() {
+  const [tipo, setTipo] = useState<Tipo>('cabeca')
+  const [qual, setQual] = useState<Qual>('boa')
+  const [pos, setPos] = useState<{x:number;y:number;px:number;py:number}|null>(null)
+  const [zona, setZona] = useState<Zona|null>(null)
+  const [ataques, setAtaques] = useState<Ataque[]>([])
+  const canReg = pos !== null && zona !== null
+
+  function registrar() {
+    if (!canReg) return
+    setAtaques(prev => [{ id: Date.now(), tipo, qualidade: qual, px: pos!.px, py: pos!.py, zona: zona! }, ...prev])
+    setPos(null); setZona(null)
+  }
+
+  const togBase = 'flex-1 py-1.5 rounded-lg text-xs font-medium transition-all border cursor-pointer'
+  const selTipo = (t: Tipo) => tipo === t ? 'bg-[#F0A500] text-white border-[#F0A500]' : 'bg-white/5 text-white/50 border-white/8 hover:border-white/20'
+  const selQual = (q: Qual) => {
+    const on: Record<Qual,string> = { boa:'bg-green-600 text-white border-green-600', media:'bg-orange-500 text-white border-orange-500', ruim:'bg-red-600 text-white border-red-600' }
+    return qual === q ? on[q] : 'bg-white/5 text-white/50 border-white/8 hover:border-white/20'
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-3 space-y-3">
+      <div className="bg-[#0f1626] rounded-xl p-3 flex gap-4 shadow-[0_4px_20px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)]">
+        <div className="flex-1">
+          <p className="text-[10px] text-white/40 uppercase tracking-wide mb-1.5">Tipo</p>
+          <div className="flex gap-1.5">
+            {(['cabeca','shark'] as Tipo[]).map(t => (
+              <button key={t} onClick={() => setTipo(t)} className={`${togBase} ${selTipo(t)}`}>{TIPO_LABEL[t]}</button>
+            ))}
+          </div>
+        </div>
+        <div className="w-px bg-white/8" />
+        <div className="flex-1">
+          <p className="text-[10px] text-white/40 uppercase tracking-wide mb-1.5">Qualidade</p>
+          <div className="flex gap-1.5">
+            {(['boa','media','ruim'] as Qual[]).map(q => (
+              <button key={q} onClick={() => setQual(q)} className={`${togBase} ${selQual(q)}`}>{QUAL_LABEL[q]}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-[#0f1626] rounded-xl p-3 shadow-[0_4px_20px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)]">
+        <div className="grid grid-cols-2 gap-2 mb-2 text-[10px] text-white/40 text-center">
+          <div><span className="bg-[#F0A500]/20 text-[#F0A500] px-2 py-0.5 rounded-full mr-1">1</span>Posição do atacante</div>
+          <div><span className="bg-red-900/40 text-red-400 px-2 py-0.5 rounded-full mr-1">2</span>Destino do ataque</div>
+        </div>
+        <div className="grid rounded-lg overflow-hidden border-2 border-[#a07840] bg-[#a07840]" style={{gridTemplateColumns:'1fr 3px 1fr'}}>
+          <QuadraCanvas ataques={ataques} posAtual={pos} onPos={setPos} />
+          <div className="bg-white/20" />
+          <ZoneGrid zonaSel={zona} ataques={ataques} onSelect={setZona} />
+        </div>
+        <div className="flex gap-2 mt-2">
+          {[
+            { n:1, done:!!pos, active:!pos, text: pos ? `Pos: ${pos.px}%, ${pos.py}%` : 'Toque na quadra' },
+            { n:2, done:!!zona, active:!!pos&&!zona, text: zona ? `${zona} selecionada` : 'Selecione o destino' },
+          ].map(s => (
+            <div key={s.n} className={`flex-1 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] border transition-colors ${s.done ? 'border-green-500/50 bg-green-900/20 text-green-400' : s.active ? 'border-[#F0A500]/50 bg-[#F0A500]/10 text-[#F0A500]' : 'border-white/8 bg-white/5 text-white/30'}`}>
+              <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-semibold text-white flex-shrink-0 ${s.done ? 'bg-green-500' : s.active ? 'bg-[#F0A500]' : 'bg-white/15'}`}>{s.n}</span>
+              {s.text}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <button onClick={registrar} disabled={!canReg}
+        className={`w-full bg-green-600 text-white font-medium py-3 rounded-xl text-sm transition-all ${canReg ? 'cursor-pointer hover:bg-green-700 active:scale-95' : 'opacity-35 cursor-not-allowed'}`}>
+        Registrar ataque
+      </button>
+      <button onClick={() => setAtaques(prev => prev.slice(1))} disabled={ataques.length === 0}
+        className="w-full bg-transparent border border-white/10 text-white/40 py-2.5 rounded-xl text-sm hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer">
+        Desfazer último
+      </button>
+
+      {ataques.length > 0 && (
+        <div className="bg-[#0f1626] rounded-xl px-4 py-3 shadow-[0_4px_20px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)]">
+          <p className="text-[10px] text-white/40 uppercase tracking-wide mb-2 font-medium">Histórico de ataques</p>
+          <div className="divide-y divide-white/5">
+            {ataques.map(a => (
+              <div key={a.id} className="flex items-center gap-2 py-2">
+                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: QUAL_COLORS[a.qualidade] }} />
+                <span className="text-[11px] text-white/70 flex-1">{TIPO_LABEL[a.tipo]} · {QUAL_LABEL[a.qualidade]}</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: a.tipo==='cabeca'?'rgba(240,165,0,0.15)':'rgba(168,85,247,0.15)', color: a.tipo==='cabeca'?'#F0A500':'#c084fc' }}>{TIPO_LABEL[a.tipo]}</span>
+                <span className="text-[9px] text-white/30 bg-white/5 px-1.5 py-0.5 rounded font-mono">{a.px}%,{a.py}%</span>
+                <span className="text-[10px] text-white/40">{a.zona}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ── MAPA CANVAS ────────────────────────────────────────────────── */
+const DEMO_ATAQUES: Ataque[] = [
+  {id:1,tipo:'shark',qualidade:'boa',px:88,py:22,zona:'Z4'},
+  {id:2,tipo:'shark',qualidade:'boa',px:90,py:32,zona:'Z4'},
+  {id:3,tipo:'shark',qualidade:'boa',px:85,py:42,zona:'Z4'},
+  {id:4,tipo:'shark',qualidade:'media',px:87,py:52,zona:'Z4'},
+  {id:5,tipo:'shark',qualidade:'boa',px:82,py:28,zona:'Z8'},
+  {id:6,tipo:'shark',qualidade:'boa',px:86,py:38,zona:'Z8'},
+  {id:7,tipo:'shark',qualidade:'media',px:89,py:48,zona:'Z8'},
+  {id:8,tipo:'shark',qualidade:'media',px:91,py:58,zona:'Z8'},
+  {id:9,tipo:'shark',qualidade:'boa',px:84,py:33,zona:'Z5'},
+  {id:10,tipo:'shark',qualidade:'media',px:88,py:48,zona:'Z5'},
+  {id:11,tipo:'cabeca',qualidade:'media',px:90,py:63,zona:'Z5'},
+  {id:12,tipo:'shark',qualidade:'media',px:83,py:27,zona:'Z2'},
+  {id:13,tipo:'cabeca',qualidade:'boa',px:87,py:40,zona:'Z2'},
+  {id:14,tipo:'cabeca',qualidade:'boa',px:85,py:18,zona:'Z1'},
+  {id:15,tipo:'shark',qualidade:'ruim',px:89,py:68,zona:'Z6'},
+]
+
+function MapaCanvas({ ataques }: { ataques: Ataque[] }) {
+  const cvRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    const cv = cvRef.current; if (!cv) return
+    const ctx = cv.getContext('2d')!
+    const W = cv.width, H = cv.height
+    const NET1 = W * 0.47, NET2 = W * 0.50
+    const RW = W - NET2, colW = RW / 3, rowH = H / 3
+    const counts = ataques.reduce<Record<string,number>>((a, x) => ({ ...a, [x.zona]: (a[x.zona] || 0) + 1 }), {})
+    const maxC = Math.max(1, ...Object.values(counts))
+
+    ctx.clearRect(0, 0, W, H)
+    ctx.fillStyle = '#c8a96e'; ctx.fillRect(0, 0, NET1, H)
+    ctx.fillStyle = '#c8a96e'; ctx.fillRect(NET2, 0, RW, H)
+    ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fillRect(NET1, 0, NET2 - NET1, H)
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 0.5; ctx.setLineDash([4, 3])
+    for (let i = 1; i < 3; i++) { ctx.beginPath(); ctx.moveTo(0, rowH * i); ctx.lineTo(NET1, rowH * i); ctx.stroke() }
+    ctx.setLineDash([])
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 0.5
+    for (let r = 1; r < 3; r++) { ctx.beginPath(); ctx.moveTo(NET2, rowH * r); ctx.lineTo(W, rowH * r); ctx.stroke() }
+    for (let c = 1; c < 3; c++) { ctx.beginPath(); ctx.moveTo(NET2 + colW * c, 0); ctx.lineTo(NET2 + colW * c, H); ctx.stroke() }
+
+    ;(['Z1','Z2','Z3','Z4','Z5','Z6','Z7','Z8','Z9'] as Zona[]).forEach(z => {
+      const col = ZONE_COL[z], row = ZONE_ROW[z]
+      const x = NET2 + col * colW, y = row * rowH, cnt = counts[z] || 0
+      const op = cnt > 0 ? 0.15 + (cnt / maxC) * 0.65 : 0
+      if (op > 0) { ctx.fillStyle = `rgba(240,165,0,${op})`; ctx.fillRect(x, y, colW, rowH) }
+      const cx = x + colW / 2
+      ctx.font = 'bold 8px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.textAlign = 'center'
+      ctx.fillText(z, cx, y + 11)
+      ctx.font = '7px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.7)'
+      ctx.fillText(ZONE_ABBR[z], cx, y + 20)
+      if (cnt > 0) { ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = 'white'; ctx.fillText(`${cnt}x`, cx, y + rowH / 2 + 6) }
+    })
+
+    ctx.save(); ctx.translate(9, H / 2); ctx.rotate(-Math.PI / 2)
+    ctx.font = '7px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.textAlign = 'center'
+    ctx.fillText('FUNDO', 0, 0); ctx.restore()
+
+    ataques.forEach(a => {
+      const ox = (a.px / 100) * NET1, oy = (a.py / 100) * H
+      const col = ZONE_COL[a.zona], row = ZONE_ROW[a.zona]
+      const dx = NET2 + col * colW + colW / 2, dy = row * rowH + rowH / 2
+      const lc = TIPO_STROKE[a.tipo], dc = QUAL_COLORS[a.qualidade]
+      const angle = Math.atan2(dy - oy, dx - ox)
+      ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(dx, dy)
+      ctx.strokeStyle = lc; ctx.lineWidth = 1; ctx.globalAlpha = 0.5; ctx.stroke(); ctx.globalAlpha = 1
+      const hl = 6
+      ctx.beginPath(); ctx.moveTo(dx, dy)
+      ctx.lineTo(dx - hl * Math.cos(angle - Math.PI / 6), dy - hl * Math.sin(angle - Math.PI / 6))
+      ctx.lineTo(dx - hl * Math.cos(angle + Math.PI / 6), dy - hl * Math.sin(angle + Math.PI / 6))
+      ctx.closePath(); ctx.fillStyle = lc; ctx.globalAlpha = 0.65; ctx.fill(); ctx.globalAlpha = 1
+      ctx.beginPath(); ctx.arc(ox, oy, 5, 0, Math.PI * 2)
+      ctx.fillStyle = dc; ctx.fill()
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 1.5; ctx.stroke()
+      ctx.beginPath(); ctx.arc(dx, dy, 4, 0, Math.PI * 2)
+      ctx.fillStyle = dc; ctx.fill()
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1; ctx.stroke()
+    })
+  }, [ataques])
+
+  return <canvas ref={cvRef} width={600} height={220} className="w-full rounded-lg border-2 border-[#a07840] block" />
+}
+
+/* ── DASHBOARD TAB ──────────────────────────────────────────────── */
+function DashboardTab() {
+  const stats = {
+    total:25,boas:13,medias:10,ruins:2,cabeca:8,shark:17,
+    prof:{frente:3,meio:13,fundo:9},
+    qual:{boa:13,media:10,ruim:2},
+    tipo:{cabeca:8,shark:17},
+    zonas:[
+      {z:'Z4',n:'PP (Porrada Paralela)',t:4,pct:25,pref:true},
+      {z:'Z8',n:'MF (Meio Fundo)',t:4,pct:25,pref:false},
+      {z:'Z5',n:'PA (Paraguaia)',t:3,pct:18.8,pref:false},
+      {z:'Z2',n:'PM (Pingo de Meio)',t:2,pct:12.5,pref:false},
+      {z:'Z1',n:'PT (Pingo p/ trás)',t:1,pct:6.3,pref:false},
+      {z:'Z6',n:'DP (Diagonal Porrada)',t:1,pct:6.3,pref:false},
+    ]
+  }
+  const sc = [
+    {l:'Total',v:25,c:'text-[#F0A500]'},{l:'Boas',v:13,c:'text-green-400'},{l:'Médias',v:10,c:'text-orange-400'},
+    {l:'Ruins',v:2,c:'text-red-400'},{l:'Cabeça',v:8,c:'text-cyan-400'},{l:'Shark',v:17,c:'text-purple-400'},
+  ]
+
+  function BarRow({ label, value, total, color }: { label:string;value:number;total:number;color:string }) {
+    const pct = Math.round(value / total * 100)
+    return (
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[11px] text-white/60 w-20 flex-shrink-0">{label}</span>
+        <div className="flex-1 bg-white/8 rounded-full h-1.5 overflow-hidden">
+          <div className="h-full rounded-full" style={{ width:`${pct}%`, background:color }} />
+        </div>
+        <span className="text-[10px] text-white/30 w-8 text-right">{pct}%</span>
+      </div>
+    )
+  }
+
+  const card = 'bg-[#0f1626] rounded-xl px-4 py-3 shadow-[0_4px_20px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)]'
+  const secLabel = 'text-[10px] text-white/40 uppercase tracking-wide mb-3'
+
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-4 space-y-3">
+      <div className="grid grid-cols-3 gap-2">
+        {sc.map(s => (
+          <div key={s.l} className="bg-[#0f1626] rounded-xl p-3 text-center shadow-[0_4px_20px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)]">
+            <p className={`text-xl font-medium ${s.c}`}>{s.v}</p>
+            <p className="text-[10px] text-white/30 mt-0.5">{s.l}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className={card}>
+        <p className={secLabel}>Mapa de ataques</p>
+        <div className="flex flex-wrap gap-3 mb-3 text-[10px] text-white/50 items-center">
+          <div className="flex items-center gap-1.5">
+            <svg width="20" height="6"><line x1="0" y1="3" x2="16" y2="3" stroke="#F0A500" strokeWidth="1.5"/><circle cx="18" cy="3" r="2" fill="#F0A500"/></svg>
+            Cabeça
+          </div>
+          <div className="flex items-center gap-1.5">
+            <svg width="20" height="6"><line x1="0" y1="3" x2="16" y2="3" stroke="#a855f7" strokeWidth="1.5"/><circle cx="18" cy="3" r="2" fill="#a855f7"/></svg>
+            Shark
+          </div>
+          <span className="text-white/20">·</span>
+          {([['#22c55e','Boa'],['#f97316','Média'],['#ef4444','Ruim']] as [string,string][]).map(([c,l]) => (
+            <div key={l} className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full inline-block" style={{background:c}} />{l}
+            </div>
+          ))}
+        </div>
+        <MapaCanvas ataques={DEMO_ATAQUES} />
+      </div>
+
+      <div className={card}>
+        <p className={secLabel}>Distribuição por profundidade</p>
+        <BarRow label="Frente (1-3)" value={stats.prof.frente} total={25} color="#ef4444" />
+        <BarRow label="Meio (4-6)" value={stats.prof.meio} total={25} color="#f97316" />
+        <BarRow label="Fundo (7-9)" value={stats.prof.fundo} total={25} color="#22c55e" />
+      </div>
+      <div className={card}>
+        <p className={secLabel}>Distribuição por qualidade</p>
+        <BarRow label="Boa" value={stats.qual.boa} total={25} color="#16a34a" />
+        <BarRow label="Média" value={stats.qual.media} total={25} color="#ea580c" />
+        <BarRow label="Ruim" value={stats.qual.ruim} total={25} color="#dc2626" />
+      </div>
+      <div className={card}>
+        <p className={secLabel}>Distribuição por tipo</p>
+        <BarRow label="Cabeça" value={stats.tipo.cabeca} total={25} color="#F0A500" />
+        <BarRow label="Shark" value={stats.tipo.shark} total={25} color="#a855f7" />
+      </div>
+      <div className={card}>
+        <p className={secLabel}>Detalhamento por zona</p>
+        <table className="w-full border-collapse">
+          <thead>
+            <tr>
+              <th className="text-left text-[10px] text-white/30 pb-2 font-medium">Zona</th>
+              <th className="text-right text-[10px] text-white/30 pb-2 font-medium">Ataques</th>
+              <th className="text-right text-[10px] text-white/30 pb-2 font-medium">%</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {stats.zonas.map(z => (
+              <tr key={z.z}>
+                <td className="py-2 text-[11px] text-white/70">
+                  {z.z} — {z.n}
+                  {z.pref && <span className="ml-1.5 text-[9px] bg-[#F0A500]/15 text-[#F0A500] px-1.5 py-0.5 rounded-full">preferida</span>}
+                </td>
+                <td className="py-2 text-right text-[11px] font-medium text-white/70">{z.t}</td>
+                <td className="py-2 text-right text-[10px] text-white/30">{z.pct}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+/* ── MATCH SCREEN ───────────────────────────────────────────────── */
+function MatchScreen({ partida, onBack }: { partida: Partida; onBack: () => void }) {
+  const [tab, setTab] = useState<'reg'|'dash'>('reg')
+  const tabCls = (active: boolean) =>
+    `flex-1 py-3 text-center text-xs font-medium border-b-2 transition-colors cursor-pointer ${active ? 'border-[#F0A500] text-[#F0A500]' : 'border-transparent text-white/40 hover:text-white/60'}`
+
+  return (
+    <div className="min-h-screen bg-[#080c14]">
+      <Navbar onBack={onBack} title={partida.jogador} sub={`vs ${partida.adversario || '—'} · ${partida.lado}`} />
+      <TimerStrip partidaId={partida.id} />
+      <PlacarSection jogador={partida.jogador} adversario={partida.adversario} />
+      <div className="flex bg-[#0f1626] shadow-[0_1px_0_rgba(255,255,255,0.04),0_4px_12px_rgba(0,0,0,0.4)]">
+        <button onClick={() => setTab('reg')} className={tabCls(tab==='reg')}>Registrar ataques</button>
+        <button onClick={() => setTab('dash')} className={tabCls(tab==='dash')}>Dashboard</button>
+      </div>
+      {tab === 'reg' ? <RegistrarTab /> : <DashboardTab />}
+    </div>
+  )
+}
+
+/* ── PAGE ROOT ──────────────────────────────────────────────────── */
+export default function MockPage() {
+  const [screen, setScreen] = useState<'home'|'match'>('home')
+  const [activePartida, setActivePartida] = useState<Partida|null>(null)
+
+  if (screen === 'match' && activePartida) {
+    return <MatchScreen partida={activePartida} onBack={() => setScreen('home')} />
+  }
+  return <HomeScreen onOpen={p => { setActivePartida(p); setScreen('match') }} />
+}
