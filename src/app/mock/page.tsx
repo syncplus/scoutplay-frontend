@@ -57,7 +57,7 @@ function Navbar({ onBack, title, sub }: { onBack?: () => void; title?: string; s
             ? <><p className="text-white text-sm font-medium leading-tight">{title}</p>
                 <p className="text-white/40 text-[10px]">{sub}</p></>
             : <><p className="text-white text-sm font-medium">ScoutPlay</p>
-                <p className="text-white/35 text-[10px]">Futevôlei · análise de ataques</p></>
+                <p className="text-white/35 text-[10px]">Futevôlei - análise de ataques</p></>
           }
         </div>
       </div>
