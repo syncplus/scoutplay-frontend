@@ -193,6 +193,7 @@ export default function LoginPage() {
                 <div className="flex justify-end mt-1.5">
                   <button
                     type="button"
+                    onClick={() => router.push('/auth/forgot-password')}
                     className="text-[11px] transition-colors"
                     style={{ color: 'rgba(250,185,0,0.5)' }}
                     onMouseEnter={(e) => (e.currentTarget.style.color = '#FAB900')}

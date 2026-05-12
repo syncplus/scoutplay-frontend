@@ -21,6 +21,22 @@ export const createUserSchema = z.object({
   role: z.enum(['admin', 'scout']),
 })
 
-export type LoginFormData = z.infer<typeof loginSchema>
-export type CreatePartidaFormData = z.infer<typeof createPartidaSchema>
-export type CreateUserFormData = z.infer<typeof createUserSchema>
+export const forgotPasswordSchema = z.object({
+  email: z.string().email('E-mail inválido'),
+})
+
+export const resetPasswordSchema = z
+  .object({
+    new_password:     z.string().min(6, 'Senha deve ter pelo menos 6 caracteres'),
+    confirm_password: z.string().min(6, 'Confirme a senha'),
+  })
+  .refine((d) => d.new_password === d.confirm_password, {
+    message: 'As senhas não coincidem',
+    path: ['confirm_password'],
+  })
+
+export type LoginFormData          = z.infer<typeof loginSchema>
+export type CreatePartidaFormData  = z.infer<typeof createPartidaSchema>
+export type CreateUserFormData     = z.infer<typeof createUserSchema>
+export type ForgotPasswordFormData = z.infer<typeof forgotPasswordSchema>
+export type ResetPasswordFormData  = z.infer<typeof resetPasswordSchema>
