@@ -7,6 +7,8 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { AlertCircle, AlertTriangle, ArrowLeft, Mail } from 'lucide-react'
 import { forgotPasswordSchema, ForgotPasswordFormData } from '@/lib/validations'
+import { apiErrorMessage } from '@/lib/api'
+import { authService } from '@/services/auth'
 import { cn } from '@/lib/utils'
 
 export default function ForgotPasswordPage() {
@@ -25,11 +27,12 @@ export default function ForgotPasswordPage() {
   async function onSubmit(data: ForgotPasswordFormData) {
     setIsLoading(true)
     try {
-      // await api.post('/auth/forgot-password', { email: data.email })
-      await new Promise((r) => setTimeout(r, 1000)) // simulação
+      await authService.forgotPassword(data.email)
       setSuccess(true)
-    } catch {
-      setError('root', { message: 'Não foi possível processar a solicitação. Tente novamente.' })
+    } catch (err) {
+      setError('root', {
+        message: apiErrorMessage(err, 'Não foi possível processar a solicitação. Tente novamente.'),
+      })
     } finally {
       setIsLoading(false)
     }

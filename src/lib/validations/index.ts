@@ -1,8 +1,8 @@
 import { z } from 'zod'
 
 export const loginSchema = z.object({
-  email: z.string().email('E-mail inválido'),
-  password: z.string().min(6, 'Senha deve ter pelo menos 6 caracteres'),
+  identifier: z.string().min(3, 'Informe seu e-mail ou username'),
+  password:   z.string().min(6, 'Senha deve ter pelo menos 6 caracteres'),
 })
 
 export const createPartidaSchema = z.object({
@@ -35,7 +35,7 @@ export const resetPasswordSchema = z
     path: ['confirm_password'],
   })
 
-export type LoginFormData          = z.infer<typeof loginSchema>
+export type LoginFormData = z.infer<typeof loginSchema>
 export type CreatePartidaFormData  = z.infer<typeof createPartidaSchema>
 export type CreateUserFormData     = z.infer<typeof createUserSchema>
 export type ForgotPasswordFormData = z.infer<typeof forgotPasswordSchema>

@@ -2,11 +2,13 @@
 
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Eye, EyeOff, LogIn, AlertCircle, AlertTriangle, ShieldCheck } from 'lucide-react'
 import { loginSchema, LoginFormData } from '@/lib/validations'
+import { apiErrorMessage } from '@/lib/api'
+import { useAuthStore } from '@/store/auth'
 import { cn } from '@/lib/utils'
 
 type Role = 'treinador' | 'admin'
@@ -18,10 +20,14 @@ const ROLES: { key: Role; label: string; icon: React.ReactNode }[] = [
 
 export default function LoginPage() {
   const router = useRouter()
-  const { login, isLoading } = {login: () => {}, isLoading: false}//useAuthStore()
-  const [role, setRole] = useState<Role>('treinador')
+  const { login, logout, isLoading, user } = useAuthStore()
+  const [role, setRole]             = useState<Role>('treinador')
+
+  useEffect(() => {
+    if (user) router.replace('/partidas')
+  }, [user, router])
   const [showPassword, setShowPassword] = useState(false)
-  const [success, setSuccess] = useState(false)
+  const [success, setSuccess]       = useState(false)
 
   const {
     register,
@@ -32,55 +38,49 @@ export default function LoginPage() {
 
   async function onSubmit(data: LoginFormData) {
     try {
-      //await login(data.email, data.password)
+      await login(data.identifier, data.password)
+      const userRole = useAuthStore.getState().user?.role
+      if (userRole !== role) {
+        logout()
+        setError('root', { message: `Acesso negado. Esta conta não é do perfil "${role}".` })
+        return
+      }
       setSuccess(true)
       setTimeout(() => router.push('/partidas'), 1500)
-    } catch {
-      setError('root', { message: 'E-mail ou senha incorretos.' })
+    } catch (err) {
+      setError('root', {
+        message: apiErrorMessage(err, 'E-mail/username ou senha incorretos.'),
+      })
     }
   }
 
   return (
     <div className="min-h-screen bg-[#111111] flex items-center justify-center p-4 relative overflow-hidden">
 
-      {/* Background glow */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[400px] h-[400px] rounded-full pointer-events-none"
            style={{ background: 'radial-gradient(circle, rgba(250,185,0,0.06) 0%, transparent 70%)' }} />
       <div className="absolute bottom-0 right-0 w-48 h-48 rounded-full pointer-events-none"
            style={{ background: 'rgba(250,185,0,0.03)' }} />
 
-      {/* Corner marks — same as logo */}
       {['top-5 left-6', 'top-5 right-6', 'bottom-5 left-6', 'bottom-5 right-6'].map((pos) => (
         <span key={pos} className={`absolute ${pos} text-[#FAB900]/10 text-xl pointer-events-none select-none`}>✕</span>
       ))}
 
       <div className="w-full max-w-[390px] relative z-10">
 
-        {/* Logo */}
         <div className="text-center mb-7">
           <div className="flex justify-center mb-3">
-            <Image
-              src="/images/logo.png"
-              alt="ScoutPlay"
-              width={110}
-              height={110}
-              className="object-contain"
-              priority
-            />
+            <Image src="/images/logo.png" alt="ScoutPlay" width={110} height={110} className="object-contain" priority />
           </div>
           <p className="text-[11px] text-white/30 uppercase tracking-[1.5px]">
             Analise · Estratégia · Evolução
           </p>
         </div>
 
-        {/* Card */}
         <div className="bg-white/[0.04] border border-white/[0.08] rounded-2xl px-6 py-6">
-          <p className="text-white text-[15px] font-medium text-center mb-5">
-            Acesse sua conta
-          </p>
+          <p className="text-white text-[15px] font-medium text-center mb-5">Acesse sua conta</p>
 
           {success ? (
-            /* Success state */
             <div className="flex flex-col items-center text-center py-4 gap-3">
               <div className="w-14 h-14 rounded-full flex items-center justify-center"
                    style={{ background: 'rgba(250,185,0,0.12)', border: '1.5px solid rgba(250,185,0,0.3)' }}>
@@ -89,16 +89,14 @@ export default function LoginPage() {
                 </svg>
               </div>
               <p className="text-white text-[15px] font-medium">Acesso autorizado!</p>
-              <p className="text-white/40 text-xs">Redirecionando para as partidas...</p>
+              <p className="text-white/40 text-xs">Redirecionando...</p>
             </div>
           ) : (
             <form onSubmit={handleSubmit(onSubmit)} noValidate>
 
               {/* Role selector */}
               <div className="mb-5">
-                <span className="text-[11px] text-white/40 uppercase tracking-[0.5px] mb-2 block">
-                  Perfil de acesso
-                </span>
+                <span className="text-[11px] text-white/40 uppercase tracking-[0.5px] mb-2 block">Perfil de acesso</span>
                 <div className="flex gap-2">
                   {ROLES.map(({ key, label, icon }) => (
                     <button
@@ -113,17 +111,16 @@ export default function LoginPage() {
                       )}
                       style={role === key ? { background: 'rgba(250,185,0,0.12)' } : { background: 'rgba(255,255,255,0.03)' }}
                     >
-                      {icon}
-                      {label}
+                      {icon}{label}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* E-mail */}
+              {/* Identifier */}
               <div className="mb-4">
                 <label className="text-[11px] text-white/40 uppercase tracking-[0.5px] block mb-1.5">
-                  E-mail
+                  E-mail ou Username
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25 pointer-events-none">
@@ -132,31 +129,28 @@ export default function LoginPage() {
                     </svg>
                   </span>
                   <input
-                    {...register('email')}
-                    type="email"
-                    placeholder="seu@email.com"
+                    {...register('identifier')}
+                    type="text"
+                    placeholder="seu@email.com ou username"
+                    autoComplete="username"
                     className={cn(
-                      'w-full h-11 pl-10 pr-3 rounded-lg text-sm text-white placeholder-white/20 outline-none transition-all',
-                      'border focus:ring-2',
-                      errors.email
+                      'w-full h-11 pl-10 pr-3 rounded-lg text-sm text-white placeholder-white/20 outline-none transition-all border focus:ring-2',
+                      errors.identifier
                         ? 'bg-white/[0.06] border-red-500/40 focus:ring-red-500/10'
                         : 'bg-white/[0.06] border-white/10 focus:border-[#FAB900]/50 focus:ring-[#FAB900]/8'
                     )}
                   />
                 </div>
-                {errors.email && (
+                {errors.identifier && (
                   <p className="flex items-center gap-1 text-red-400 text-[11px] mt-1.5">
-                    <AlertCircle size={11} />
-                    {errors.email.message}
+                    <AlertCircle size={11} />{errors.identifier.message}
                   </p>
                 )}
               </div>
 
               {/* Senha */}
               <div className="mb-1">
-                <label className="text-[11px] text-white/40 uppercase tracking-[0.5px] block mb-1.5">
-                  Senha
-                </label>
+                <label className="text-[11px] text-white/40 uppercase tracking-[0.5px] block mb-1.5">Senha</label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25 pointer-events-none">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -167,9 +161,9 @@ export default function LoginPage() {
                     {...register('password')}
                     type={showPassword ? 'text' : 'password'}
                     placeholder="••••••••"
+                    autoComplete="current-password"
                     className={cn(
-                      'w-full h-11 pl-10 pr-10 rounded-lg text-sm text-white placeholder-white/20 outline-none transition-all',
-                      'border focus:ring-2',
+                      'w-full h-11 pl-10 pr-10 rounded-lg text-sm text-white placeholder-white/20 outline-none transition-all border focus:ring-2',
                       errors.password
                         ? 'bg-white/[0.06] border-red-500/40 focus:ring-red-500/10'
                         : 'bg-white/[0.06] border-white/10 focus:border-[#FAB900]/50 focus:ring-[#FAB900]/8'
@@ -179,15 +173,13 @@ export default function LoginPage() {
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-white/25 hover:text-white/60 transition-colors"
-                    aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
                   >
                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
                 {errors.password && (
                   <p className="flex items-center gap-1 text-red-400 text-[11px] mt-1.5">
-                    <AlertCircle size={11} />
-                    {errors.password.message}
+                    <AlertCircle size={11} />{errors.password.message}
                   </p>
                 )}
                 <div className="flex justify-end mt-1.5">
@@ -204,7 +196,6 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              {/* Global error */}
               {errors.root && (
                 <div className="flex items-center gap-2 mt-3 px-3 py-2.5 rounded-lg text-red-400 text-xs"
                      style={{ background: 'rgba(239,68,68,0.1)', border: '0.5px solid rgba(239,68,68,0.25)' }}>
@@ -213,7 +204,6 @@ export default function LoginPage() {
                 </div>
               )}
 
-              {/* Submit */}
               <button
                 type="submit"
                 disabled={isLoading}
@@ -226,10 +216,7 @@ export default function LoginPage() {
                     Verificando...
                   </>
                 ) : (
-                  <>
-                    <LogIn size={16} />
-                    Entrar
-                  </>
+                  <><LogIn size={16} />Entrar</>
                 )}
               </button>
 
@@ -237,11 +224,9 @@ export default function LoginPage() {
           )}
         </div>
 
-        {/* Golden accent line */}
         <div className="h-[2px] rounded-full mx-8 opacity-50"
              style={{ background: 'linear-gradient(90deg, transparent, #FAB900, transparent)' }} />
 
-        {/* Footer */}
         <p className="text-center mt-5 text-[12px] text-white/20">
           Não tem acesso?{' '}
           <button className="transition-colors" style={{ color: 'rgba(250,185,0,0.6)' }}

@@ -7,6 +7,8 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { AlertCircle, AlertTriangle, Eye, EyeOff, KeyRound } from 'lucide-react'
 import { resetPasswordSchema, ResetPasswordFormData } from '@/lib/validations'
+import { apiErrorMessage } from '@/lib/api'
+import { authService } from '@/services/auth'
 import { cn } from '@/lib/utils'
 
 function ResetPasswordForm() {
@@ -26,19 +28,20 @@ function ResetPasswordForm() {
     formState: { errors },
   } = useForm<ResetPasswordFormData>({ resolver: zodResolver(resetPasswordSchema) })
 
-  async function onSubmit(_data: ResetPasswordFormData) {
+  async function onSubmit(data: ResetPasswordFormData) {
     if (!token) {
       setError('root', { message: 'Link inválido ou expirado. Solicite um novo.' })
       return
     }
     setIsLoading(true)
     try {
-      // await api.post('/auth/reset-password', { token, new_password: data.new_password })
-      await new Promise((r) => setTimeout(r, 1000)) // simulação
+      await authService.resetPassword(token, data.new_password)
       setSuccess(true)
       setTimeout(() => router.push('/auth/login'), 2500)
-    } catch {
-      setError('root', { message: 'Link inválido ou expirado. Solicite um novo.' })
+    } catch (err) {
+      setError('root', {
+        message: apiErrorMessage(err, 'Link inválido ou expirado. Solicite um novo.'),
+      })
     } finally {
       setIsLoading(false)
     }
