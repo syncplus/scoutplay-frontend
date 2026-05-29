@@ -73,7 +73,7 @@ export default function LoginPage() {
             <Image src="/images/logo.png" alt="ScoutPlay" width={110} height={110} className="object-contain" priority />
           </div>
           <p className="text-[11px] text-white/30 uppercase tracking-[1.5px]">
-            Analise · Estratégia · Evolução
+            Analise · Estratégia · Evoluçãoo
           </p>
         </div>
 
