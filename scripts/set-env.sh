@@ -4,4 +4,5 @@ if [ "$VERCEL_ENV" = "preview" ]; then
   cp .env.development .env.production
 fi
 
+set -a; source .env.production; set +a
 echo "TESTE: $TESTE"
