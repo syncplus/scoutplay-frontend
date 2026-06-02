@@ -5,4 +5,3 @@ if [ "$VERCEL_ENV" = "preview" ]; then
 fi
 
 set -a; source .env.production; set +a
-echo "TESTE: $TESTE"
