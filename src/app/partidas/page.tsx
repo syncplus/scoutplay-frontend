@@ -20,13 +20,6 @@ interface Ataque {
 interface SetResult { num: number; nos: number; them: number }
 
 /* ── Constants ─────────────────────────────────────────────────────── */
-const INITIAL_PARTIDAS: Partida[] = [
-  { id:'1', jogador:'Avatar e Gaúcho',  adversario:'Gabrielzinho e Pedrin', fase:'Semi final 1', lado:'Esq', status:'prog', data:'25 abr', ataques:25, tempo:1934 },
-  { id:'2', jogador:'Felipe Ice',        adversario:'Longo e Vitinho',        fase:'Grupo',       lado:'Esq', status:'wait', data:'28 abr', ataques:0,  tempo:0    },
-  { id:'3', jogador:'Lucao e Matheus',  adversario:'João e Iuri',            fase:'Final',       lado:'Dir', status:'done', data:'24 abr', ataques:17, tempo:2467 },
-  { id:'4', jogador:'Kuka e Torres',    adversario:'Avatar e Gaúcho',        fase:'Grupo',       lado:'Dir', status:'wait', data:'28 abr', ataques:0,  tempo:0    },
-  { id:'5', jogador:'Dudu e Arthur',    adversario:'Tavinho e Amauri',       fase:'Grupo',       lado:'Dir', status:'done', data:'25 abr', ataques:16, tempo:1735 },
-]
 const ZONES: { code: Zona; abbr: string }[] = [
   {code:'Z1',abbr:'PT'},{code:'Z2',abbr:'PM'},{code:'Z3',abbr:'DC'},
   {code:'Z4',abbr:'PP'},{code:'Z5',abbr:'PA'},{code:'Z6',abbr:'DP'},
@@ -536,7 +529,7 @@ function MatchScreen({ partida, onBack }: { partida: Partida; onBack: () => void
 
 /* ── Home Screen ───────────────────────────────────────────────────── */
 function HomeScreen({ onOpen }: { onOpen: (p: Partida) => void }) {
-  const [partidas, setPartidas] = useState<Partida[]>(INITIAL_PARTIDAS)
+  const [partidas, setPartidas] = useState<Partida[]>([])
   const [filtro, setFiltro]     = useState<'all'|Status>('all')
   const [modalOpen, setModalOpen] = useState(false)
 
@@ -570,7 +563,21 @@ function HomeScreen({ onOpen }: { onOpen: (p: Partida) => void }) {
           {filtered.map(p=><PartidaCard key={p.id} p={p} onOpen={onOpen} onDelete={id=>setPartidas(prev=>prev.filter(x=>x.id!==id))} />)}
         </div>
         {filtered.length===0&&(
-          <div className="text-center py-16 text-white/25 text-sm">Nenhuma partida encontrada.</div>
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-white/5 flex items-center justify-center mb-4">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M8 2v4M16 2v4"/>
+              </svg>
+            </div>
+            <p className="text-white/60 text-sm font-medium mb-1">
+              {filtro==='all' ? 'Nenhuma partida ainda' : 'Nenhuma partida encontrada'}
+            </p>
+            <p className="text-white/30 text-xs">
+              {filtro==='all'
+                ? 'Crie sua primeira partida para começar a registrar ataques.'
+                : 'Nenhuma partida com esse status no momento.'}
+            </p>
+          </div>
         )}
       </div>
       {modalOpen&&<ModalNovaPartida onClose={()=>setModalOpen(false)} onCreate={nova=>{setPartidas(prev=>[nova,...prev]);setModalOpen(false)}} />}
