@@ -1,7 +1,7 @@
 import api from '@/lib/api'
 import type { LancamentoDTO, CreateLancamentoPayload } from '@/types/partida-lancamento'
 
-const BASE = '/api/v1/partidas'
+const BASE = '/partidas'
 
 export const partidaLancamentosService = {
   async add(partidaId: string, payload: CreateLancamentoPayload): Promise<LancamentoDTO> {

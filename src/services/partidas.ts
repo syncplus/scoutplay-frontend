@@ -7,7 +7,7 @@ import type {
   Status,
 } from '@/types/partida'
 
-const BASE = '/api/v1/partidas'
+const BASE = '/partidas'
 
 export const partidasService = {
   async list(status?: Status): Promise<{ data: PartidaDTO[]; total: number }> {

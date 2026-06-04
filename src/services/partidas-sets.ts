@@ -1,7 +1,7 @@
 import api from '@/lib/api'
 import type { SetDTO, CreateSetPayload } from '@/types/partida-set'
 
-const BASE = '/api/v1/partidas'
+const BASE = '/partidas'
 
 export const partidaSetsService = {
   async add(partidaId: string, payload: CreateSetPayload): Promise<SetDTO> {
