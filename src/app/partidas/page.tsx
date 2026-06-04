@@ -1,103 +1,84 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuthStore } from '@/store/auth'
+import { apiErrorMessage } from '@/lib/api'
+import { partidasService } from '@/services/partidas'
+import { partidaSetsService } from '@/services/partidas-sets'
+import { partidaLancamentosService } from '@/services/partidas-lancamentos'
+import { useUIStore } from '@/store/ui'
+import { Navbar } from '@/components/Navbar'
+import { Sidebar } from '@/components/Sidebar'
+import { Toast as ErrorToast } from '@/components/Toast'
+import type { PartidaDTO, Status, Lado } from '@/types/partida'
+import type { SetDTO } from '@/types/partida-set'
+import type { LancamentoDTO, Tipo, Qual, Zona } from '@/types/partida-lancamento'
 
-/* ── Types ─────────────────────────────────────────────────────────── */
-type Status = 'wait' | 'prog' | 'done'
-type Tipo   = 'cabeca' | 'shark'
-type Qual   = 'boa' | 'media' | 'ruim'
-type Zona   = 'Z1'|'Z2'|'Z3'|'Z4'|'Z5'|'Z6'|'Z7'|'Z8'|'Z9'
-
-interface Partida {
-  id: string; jogador: string; adversario?: string; fase: string
-  lado: 'Esq'|'Dir'; status: Status; data: string; ataques: number; tempo: number
-}
+/* ── Types (UI) ────────────────────────────────────────────────────── */
 interface Ataque {
-  id: number; tipo: Tipo; qualidade: Qual; px: number; py: number; zona: Zona
+  id: string; tipo: Tipo; qualidade: Qual; px: number; py: number; zona: Zona
 }
-interface SetResult { num: number; nos: number; them: number }
+
+const toAtaque = (l: LancamentoDTO): Ataque => ({
+  id: l.id, tipo: l.tipo, qualidade: l.qualidade, px: l.pos_x, py: l.pos_y, zona: l.zona,
+})
 
 /* ── Constants ─────────────────────────────────────────────────────── */
+// Ordem alinhada ao mapa de ataques (preenche o grid-cols-3 linha a linha):
+// linha 1: Z1 Z4 Z7 · linha 2: Z2 Z5 Z8 · linha 3: Z3 Z6 Z9
 const ZONES: { code: Zona; abbr: string }[] = [
-  {code:'Z1',abbr:'PT'},{code:'Z2',abbr:'PM'},{code:'Z3',abbr:'DC'},
-  {code:'Z4',abbr:'PP'},{code:'Z5',abbr:'PA'},{code:'Z6',abbr:'DP'},
-  {code:'Z7',abbr:'LP'},{code:'Z8',abbr:'MF'},{code:'Z9',abbr:'DL'},
+  {code:'Z1',abbr:'PT'},{code:'Z4',abbr:'PP'},{code:'Z7',abbr:'LP'},
+  {code:'Z2',abbr:'PM'},{code:'Z5',abbr:'PA'},{code:'Z8',abbr:'MF'},
+  {code:'Z3',abbr:'DC'},{code:'Z6',abbr:'DP'},{code:'Z9',abbr:'DL'},
 ]
 const ZONE_COL: Record<Zona,number> = {Z1:0,Z2:0,Z3:0,Z4:1,Z5:1,Z6:1,Z7:2,Z8:2,Z9:2}
 const ZONE_ROW: Record<Zona,number> = {Z1:0,Z4:0,Z7:0,Z2:1,Z5:1,Z8:1,Z3:2,Z6:2,Z9:2}
 const ZONE_ABBR: Record<Zona,string> = {Z1:'PT',Z2:'PM',Z3:'DC',Z4:'PP',Z5:'PA',Z6:'DP',Z7:'LP',Z8:'MF',Z9:'DL'}
+const ZONE_FULL: Record<Zona,string> = {
+  Z1:'PT (Pingo p/ trás)', Z2:'PM (Pingo de Meio)', Z3:'DC (Diagonal Curta)',
+  Z4:'PP (Porrada Paralela)', Z5:'PA (Paraguaia)', Z6:'DP (Diagonal Porrada)',
+  Z7:'LP (Largada Paralela)', Z8:'MF (Meio Fundo)', Z9:'DL (Diagonal Longa)',
+}
 const QUAL_COLORS: Record<Qual,string>  = { boa:'#22c55e', media:'#f97316', ruim:'#ef4444' }
 const TIPO_STROKE: Record<Tipo,string>  = { cabeca:'#F0A500', shark:'#a855f7' }
 const QUAL_LABEL:  Record<Qual,string>  = { boa:'Boa', media:'Média', ruim:'Ruim' }
 const TIPO_LABEL:  Record<Tipo,string>  = { cabeca:'Cabeça', shark:'Shark' }
+const MESES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez']
 const pad = (n: number) => String(n).padStart(2,'0')
 const fmtTime = (s: number) => `${pad(Math.floor(s/60))}:${pad(s%60)}`
+const fmtDur  = (s: number) => s>=60 ? `${Math.floor(s/60)}m${pad(s%60)}s` : `${s}s`
+const fmtData = (iso: string | null) => {
+  if (!iso) return '—'
+  const [, m, d] = iso.split('-').map(Number)
+  return `${d} ${MESES[(m-1)] ?? ''}`
+}
 
 const statusLabel     = (s: Status) => ({ prog:'Em progresso', wait:'Aguardando', done:'Finalizada' }[s])
 const statusStripe    = (s: Status) => ({ prog:'#16a34a', wait:'#f59e0b', done:'#F0A500' }[s])
 const statusPillClass = (s: Status) => ({ prog:'bg-green-900/40 text-green-400', wait:'bg-amber-900/40 text-amber-400', done:'bg-yellow-900/40 text-yellow-400' }[s])
 const statusDot       = (s: Status) => ({ prog:'bg-green-500', wait:'bg-amber-400', done:'bg-yellow-400' }[s])
 
-/* ── Navbar ────────────────────────────────────────────────────────── */
-function Navbar({ onBack, title, sub }: { onBack?: () => void; title?: string; sub?: string }) {
-  const { user, logout } = useAuthStore()
-  const router = useRouter()
-  const initials = user?.name?.split(' ').map(w => w[0]).slice(0,2).join('').toUpperCase() ?? 'U'
-
-  function handleLogout() {
-    logout()
-    router.replace('/auth/login')
-  }
-
-  return (
-    <nav className="h-[50px] bg-[#080c14] flex items-center justify-between px-4 shadow-[0_1px_0_rgba(255,255,255,0.04),0_4px_16px_rgba(0,0,0,0.6)]">
-      <div className="flex items-center gap-2.5">
-        <img src="/images/logo.png" alt="ScoutPlay" className="h-7 w-auto flex-shrink-0" />
-        <div>
-          {title
-            ? <><p className="text-white text-sm font-medium leading-tight">{title}</p>
-                <p className="text-white/40 text-[10px]">{sub}</p></>
-            : <><p className="text-white text-sm font-medium">ScoutPlay</p>
-                <p className="text-white/35 text-[10px]">Futevôlei - análise de ataques</p></>
-          }
-        </div>
-      </div>
-      {onBack ? (
-        <button onClick={onBack} className="flex items-center gap-1 bg-white/8 text-white/70 text-xs px-3 py-1.5 rounded-lg hover:bg-white/15 transition-colors">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M8 2L4 6l4 4"/></svg>
-          Partidas
-        </button>
-      ) : (
-        <div className="flex items-center gap-2">
-          <button onClick={handleLogout} className="text-white/30 hover:text-white/60 transition-colors p-1" title="Sair">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
-            </svg>
-          </button>
-          <div className="w-7 h-7 rounded-full bg-[#F0A500]/20 flex items-center justify-center text-[#F0A500] text-[10px] font-medium">{initials}</div>
-          <span className="text-white/60 text-xs capitalize">{user?.role ?? ''}</span>
-        </div>
-      )}
-    </nav>
-  )
-}
-
 /* ── Modal Nova Partida ─────────────────────────────────────────────── */
-function ModalNovaPartida({ onClose, onCreate }: { onClose: () => void; onCreate: (p: Partida) => void }) {
-  const [jogador, setJogador]     = useState('')
+function ModalNovaPartida({ onClose, onCreate }: { onClose: () => void; onCreate: (p: { jogador: string; adversario: string; fase: string; lado: Lado; data: string }) => Promise<void> }) {
+  const [jogador, setJogador]       = useState('')
   const [adversario, setAdversario] = useState('')
-  const [fase, setFase]           = useState('')
-  const [lado, setLado]           = useState<'Esq'|'Dir'>('Esq')
-  const [data, setData]           = useState(new Date().toISOString().slice(0,10))
+  const [fase, setFase]             = useState('')
+  const [lado, setLado]             = useState<Lado>('Esq')
+  const [data, setData]             = useState(new Date().toISOString().slice(0,10))
+  const [saving, setSaving]         = useState(false)
 
   const inputCls = "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 outline-none focus:border-[#F0A500]/60 transition-colors"
 
-  function handleCreate() {
-    if (!jogador.trim() || !fase.trim()) return
-    onCreate({ id: String(Date.now()), jogador, adversario, fase, lado, status:'wait', data: data.slice(5).replace('-',' '), ataques:0, tempo:0 })
-    onClose()
+  async function handleCreate() {
+    if (!jogador.trim() || !fase.trim() || saving) return
+    setSaving(true)
+    try {
+      await onCreate({ jogador: jogador.trim(), adversario: adversario.trim(), fase: fase.trim(), lado, data })
+      onClose()
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -139,7 +120,7 @@ function ModalNovaPartida({ onClose, onCreate }: { onClose: () => void; onCreate
         </div>
         <div className="flex gap-2 justify-end px-5 pb-5">
           <button onClick={onClose} className="bg-transparent border border-white/15 text-white/60 px-5 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors">Cancelar</button>
-          <button onClick={handleCreate} disabled={!jogador.trim()||!fase.trim()} className="bg-[#F0A500] text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-[#D4920A] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Criar partida</button>
+          <button onClick={handleCreate} disabled={!jogador.trim()||!fase.trim()||saving} className="bg-[#F0A500] text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-[#D4920A] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">{saving?'Criando…':'Criar partida'}</button>
         </div>
       </div>
     </div>
@@ -147,7 +128,7 @@ function ModalNovaPartida({ onClose, onCreate }: { onClose: () => void; onCreate
 }
 
 /* ── Partida Card ──────────────────────────────────────────────────── */
-function PartidaCard({ p, onOpen, onDelete }: { p: Partida; onOpen: (p: Partida) => void; onDelete: (id: string) => void }) {
+function PartidaCard({ p, onOpen, onDelete }: { p: PartidaDTO; onOpen: (p: PartidaDTO) => void; onDelete: (id: string) => void }) {
   return (
     <div className="bg-[#0f1626] rounded-xl overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(255,255,255,0.05)] hover:shadow-[0_6px_32px_rgba(0,0,0,0.75),inset_0_1px_0_rgba(255,255,255,0.08)] hover:-translate-y-0.5 transition-all">
       <div style={{ height:4, background: statusStripe(p.status) }} />
@@ -166,7 +147,7 @@ function PartidaCard({ p, onOpen, onDelete }: { p: Partida; onOpen: (p: Partida)
       <div className="px-4 py-2.5 flex items-center justify-between">
         <div className="flex gap-1.5">
           <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${p.lado==='Esq'?'bg-indigo-900/50 text-indigo-300':'bg-pink-900/50 text-pink-300'}`}>{p.lado}</span>
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/8 text-white/40">{p.data}</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/8 text-white/40">{fmtData(p.data)}</span>
         </div>
         <div className="text-right">
           <p className={`text-lg font-medium leading-none ${p.ataques===0?'text-amber-400':'text-[#F0A500]'}`}>{p.ataques}</p>
@@ -194,11 +175,15 @@ function PartidaCard({ p, onOpen, onDelete }: { p: Partida; onOpen: (p: Partida)
 }
 
 /* ── Timer Strip ───────────────────────────────────────────────────── */
-function TimerStrip() {
-  const [secs, setSecs]       = useState(0)
-  const [running, setRunning] = useState(false)
-  const [pauses, setPauses]   = useState(0)
-  const [finished, setFinished] = useState(false)
+function TimerStrip({ initialSecs, initialFinished, onStart, onPersist, onFinish, onTick }: {
+  initialSecs: number; initialFinished: boolean
+  onStart: () => void; onPersist: (secs: number) => void; onFinish: (secs: number) => void
+  onTick: (secs: number) => void
+}) {
+  const [secs, setSecs]         = useState(initialSecs)
+  const [running, setRunning]   = useState(false)
+  const [pauses, setPauses]     = useState(0)
+  const [finished, setFinished] = useState(initialFinished)
   const ivRef = useRef<NodeJS.Timeout|null>(null)
 
   useEffect(() => {
@@ -207,9 +192,20 @@ function TimerStrip() {
     return () => { if (ivRef.current) clearInterval(ivRef.current) }
   }, [running])
 
+  // Reporta o tempo corrido para o pai (placar usa para o tempo do set / total)
+  useEffect(() => { onTick(secs) }, [secs])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reabrir partida finalizada: destrava o cronômetro sem remontar o componente
+  useEffect(() => { setFinished(initialFinished) }, [initialFinished])
+
   const color = finished?'text-[#F0A500]':running?'text-green-400':secs>0?'text-amber-400':'text-white/30'
   const btn = (bg: string, disabled: boolean) =>
     `text-xs font-medium px-4 py-1.5 rounded-lg transition-all ${disabled?'bg-white/7 text-white/25 cursor-not-allowed':`${bg} text-white cursor-pointer hover:opacity-90`}`
+
+  function iniciar()  { setRunning(true); onStart() }
+  function pausar()   { setRunning(false); setPauses(p=>p+1); onPersist(secs) }
+  function retomar()  { setRunning(true) }
+  function finalizar(){ setRunning(false); setFinished(true); onFinish(secs) }
 
   return (
     <div className="bg-[#080c14] px-4 py-3 shadow-[0_1px_0_rgba(255,255,255,0.04),0_4px_12px_rgba(0,0,0,0.5)]">
@@ -218,12 +214,12 @@ function TimerStrip() {
         <p className={`text-3xl font-medium font-mono tracking-widest ${color}`}>{fmtTime(secs)}</p>
       </div>
       <div className="flex gap-2 justify-center">
-        <button onClick={()=>setRunning(true)} disabled={running||secs>0||finished} className={btn('bg-green-600',running||secs>0||finished)}>Iniciar</button>
+        <button onClick={iniciar} disabled={running||secs>0||finished} className={btn('bg-green-600',running||secs>0||finished)}>Iniciar</button>
         {running
-          ? <button onClick={()=>{setRunning(false);setPauses(p=>p+1)}} className={btn('bg-amber-600',false)}>Pausar</button>
-          : <button onClick={()=>setRunning(true)} disabled={secs===0||finished} className={btn('bg-[#F0A500]',secs===0||finished)}>Retomar</button>
+          ? <button onClick={pausar} className={btn('bg-amber-600',false)}>Pausar</button>
+          : <button onClick={retomar} disabled={secs===0||finished} className={btn('bg-[#F0A500]',secs===0||finished)}>Retomar</button>
         }
-        <button onClick={()=>{setRunning(false);setFinished(true)}} disabled={secs===0||finished} className={btn('bg-red-600',secs===0||finished)}>Finalizar</button>
+        <button onClick={finalizar} disabled={secs===0||finished} className={btn('bg-red-600',secs===0||finished)}>Finalizar</button>
       </div>
       <p className="text-center text-white/30 text-[10px] mt-2">
         {finished?`Finalizada · ${fmtTime(secs)} · ${pauses} pausa(s)`:running?`Em andamento · ${pauses} pausa(s)`:secs>0?`Pausado · ${pauses} pausa(s)`:'Partida não iniciada'}
@@ -233,11 +229,25 @@ function TimerStrip() {
 }
 
 /* ── Placar ────────────────────────────────────────────────────────── */
-function PlacarSection({ jogador, adversario }: { jogador: string; adversario?: string }) {
+function PlacarSection({ jogador, adversario, sets, tempoTotal, readOnly, onFinalizeSet }: {
+  jogador: string; adversario?: string | null; sets: SetDTO[]; tempoTotal: number; readOnly?: boolean
+  onFinalizeSet: (nos: number, them: number) => Promise<void>
+}) {
   const [nos, setNos]   = useState(0)
   const [them, setThem] = useState(0)
-  const [sets, setSets] = useState<SetResult[]>([])
-  const [setNum, setSetNum] = useState(1)
+  const [saving, setSaving] = useState(false)
+  const setNum = sets.length + 1
+
+  async function finalizar() {
+    if (saving) return
+    setSaving(true)
+    try {
+      await onFinalizeSet(nos, them)
+      setNos(0); setThem(0)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const ScoreBtn = ({ onClick, bg, children }: { onClick:()=>void; bg:string; children:React.ReactNode }) => (
     <button onClick={onClick} className={`w-9 h-9 ${bg} text-white rounded-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all`}>{children}</button>
@@ -246,6 +256,7 @@ function PlacarSection({ jogador, adversario }: { jogador: string; adversario?: 
   return (
     <div className="bg-[#0a0e1a] px-4 py-3 shadow-[0_1px_0_rgba(255,255,255,0.04),0_4px_12px_rgba(0,0,0,0.5)]">
       <p className="text-[10px] text-white/35 uppercase tracking-widest text-center mb-3">Placar</p>
+      {!readOnly && (
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
         <div className="text-center">
           <p className="text-[11px] text-green-400 font-medium mb-1.5 truncate">{jogador}</p>
@@ -268,19 +279,26 @@ function PlacarSection({ jogador, adversario }: { jogador: string; adversario?: 
           </div>
         </div>
       </div>
+      )}
       {sets.length>0 && (
         <div className="mt-3 border-t border-white/7 pt-2.5">
           <p className="text-[10px] text-white/30 text-center mb-1.5">Histórico de sets</p>
           <div className="flex gap-2 justify-center flex-wrap">
-            {sets.map(s=><span key={s.num} className="bg-white/8 rounded-md px-2.5 py-1 text-[11px] text-white/70 font-mono">Set {s.num}: {s.nos}×{s.them}</span>)}
+            {sets.map(s=><span key={s.id} className="bg-white/8 rounded-md px-2.5 py-1 text-[11px] text-white/70 font-mono">Set {s.numero}: {s.pontos_jogador}×{s.pontos_adversario} · {fmtDur(s.tempo)}</span>)}
           </div>
         </div>
       )}
+      <div className="mt-2.5 text-center">
+        <span className="text-[10px] text-white/35">Tempo total da partida · </span>
+        <span className="text-[11px] text-white/70 font-mono">{fmtTime(tempoTotal)}</span>
+      </div>
+      {!readOnly && (
       <div className="mt-2.5 flex justify-center">
-        <button onClick={()=>{setSets(s=>[...s,{num:setNum,nos,them}]);setSetNum(n=>n+1);setNos(0);setThem(0)}} className="text-white/55 hover:text-white/80 text-[11px] bg-white/7 hover:bg-white/12 px-3 py-1.5 rounded-lg transition-all">
-          Finalizar set e iniciar próximo
+        <button onClick={finalizar} disabled={saving} className="text-white/55 hover:text-white/80 text-[11px] bg-white/7 hover:bg-white/12 px-3 py-1.5 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+          {saving?'Salvando…':'Finalizar set e iniciar próximo'}
         </button>
       </div>
+      )}
     </div>
   )
 }
@@ -354,18 +372,33 @@ function ZoneGrid({ zonaSel, ataques, onSelect }: { zonaSel:Zona|null; ataques:A
 }
 
 /* ── Registrar Tab ─────────────────────────────────────────────────── */
-function RegistrarTab() {
+function RegistrarTab({ ataques, onRegister, onUndo }: {
+  ataques: Ataque[]
+  onRegister: (payload: { tipo: Tipo; qualidade: Qual; pos_x: number; pos_y: number; zona: Zona }) => Promise<void>
+  onUndo: (id: string) => Promise<void>
+}) {
   const [tipo, setTipo]   = useState<Tipo>('cabeca')
   const [qual, setQual]   = useState<Qual>('boa')
   const [pos, setPos]     = useState<{x:number;y:number;px:number;py:number}|null>(null)
   const [zona, setZona]   = useState<Zona|null>(null)
-  const [ataques, setAtaques] = useState<Ataque[]>([])
-  const canReg = pos!==null && zona!==null
+  const [busy, setBusy]   = useState(false)
+  const canReg = pos!==null && zona!==null && !busy
 
-  function registrar(){
-    if(!canReg) return
-    setAtaques(prev=>[{id:Date.now(),tipo,qualidade:qual,px:pos!.px,py:pos!.py,zona:zona!},...prev])
-    setPos(null); setZona(null)
+  async function registrar(){
+    if(pos===null || zona===null || busy) return
+    setBusy(true)
+    try {
+      await onRegister({ tipo, qualidade: qual, pos_x: pos.px, pos_y: pos.py, zona })
+      setPos(null); setZona(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function desfazer(){
+    if(ataques.length===0 || busy) return
+    setBusy(true)
+    try { await onUndo(ataques[0].id) } finally { setBusy(false) }
   }
 
   const togBase = 'flex-1 py-1.5 rounded-lg text-xs font-medium transition-all border'
@@ -410,8 +443,8 @@ function RegistrarTab() {
           ))}
         </div>
       </div>
-      <button onClick={registrar} disabled={!canReg} className={`w-full bg-green-600 text-white font-medium py-3 rounded-xl text-sm transition-all ${canReg?'hover:bg-green-700 active:scale-95':'opacity-35 cursor-not-allowed'}`}>Registrar ataque</button>
-      <button onClick={()=>setAtaques(prev=>prev.slice(1))} disabled={ataques.length===0} className="w-full bg-transparent border border-white/10 text-white/40 py-2.5 rounded-xl text-sm hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-all">Desfazer último</button>
+      <button onClick={registrar} disabled={!canReg} className={`w-full bg-green-600 text-white font-medium py-3 rounded-xl text-sm transition-all ${canReg?'hover:bg-green-700 active:scale-95':'opacity-35 cursor-not-allowed'}`}>{busy?'Salvando…':'Registrar ataque'}</button>
+      <button onClick={desfazer} disabled={ataques.length===0||busy} className="w-full bg-transparent border border-white/10 text-white/40 py-2.5 rounded-xl text-sm hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-all">Desfazer último</button>
       {ataques.length>0&&(
         <div className="bg-[#0f1626] rounded-xl px-4 py-3 shadow-[0_4px_20px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)]">
           <p className="text-[10px] text-white/40 uppercase tracking-wide mb-2 font-medium">Histórico de ataques</p>
@@ -432,17 +465,6 @@ function RegistrarTab() {
 }
 
 /* ── Mapa Canvas ───────────────────────────────────────────────────── */
-const DEMO_ATAQUES: Ataque[] = [
-  {id:1,tipo:'shark',qualidade:'boa',px:88,py:22,zona:'Z4'},{id:2,tipo:'shark',qualidade:'boa',px:90,py:32,zona:'Z4'},
-  {id:3,tipo:'shark',qualidade:'boa',px:85,py:42,zona:'Z4'},{id:4,tipo:'shark',qualidade:'media',px:87,py:52,zona:'Z4'},
-  {id:5,tipo:'shark',qualidade:'boa',px:82,py:28,zona:'Z8'},{id:6,tipo:'shark',qualidade:'boa',px:86,py:38,zona:'Z8'},
-  {id:7,tipo:'shark',qualidade:'media',px:89,py:48,zona:'Z8'},{id:8,tipo:'shark',qualidade:'media',px:91,py:58,zona:'Z8'},
-  {id:9,tipo:'shark',qualidade:'boa',px:84,py:33,zona:'Z5'},{id:10,tipo:'shark',qualidade:'media',px:88,py:48,zona:'Z5'},
-  {id:11,tipo:'cabeca',qualidade:'media',px:90,py:63,zona:'Z5'},{id:12,tipo:'shark',qualidade:'media',px:83,py:27,zona:'Z2'},
-  {id:13,tipo:'cabeca',qualidade:'boa',px:87,py:40,zona:'Z2'},{id:14,tipo:'cabeca',qualidade:'boa',px:85,py:18,zona:'Z1'},
-  {id:15,tipo:'shark',qualidade:'ruim',px:89,py:68,zona:'Z6'},
-]
-
 function MapaCanvas({ ataques }: { ataques: Ataque[] }) {
   const cvRef = useRef<HTMLCanvasElement>(null)
   useEffect(()=>{
@@ -485,62 +507,311 @@ function MapaCanvas({ ataques }: { ataques: Ataque[] }) {
 }
 
 /* ── Dashboard Tab ─────────────────────────────────────────────────── */
-function DashboardTab() {
-  const stats = {total:25,qual:{boa:13,media:10,ruim:2},tipo:{cabeca:8,shark:17},prof:{frente:3,meio:13,fundo:9},
-    zonas:[{z:'Z4',n:'PP (Porrada Paralela)',t:4,pct:25,pref:true},{z:'Z8',n:'MF (Meio Fundo)',t:4,pct:25,pref:false},{z:'Z5',n:'PA (Paraguaia)',t:3,pct:18.8,pref:false},{z:'Z2',n:'PM (Pingo de Meio)',t:2,pct:12.5,pref:false},{z:'Z1',n:'PT (Pingo p/ trás)',t:1,pct:6.3,pref:false},{z:'Z6',n:'DP (Diagonal Porrada)',t:1,pct:6.3,pref:false}]
-  }
-  const sc=[{l:'Total',v:25,c:'text-[#F0A500]'},{l:'Boas',v:13,c:'text-green-400'},{l:'Médias',v:10,c:'text-orange-400'},{l:'Ruins',v:2,c:'text-red-400'},{l:'Cabeça',v:8,c:'text-cyan-400'},{l:'Shark',v:17,c:'text-purple-400'}]
-  const BarRow=({label,value,total,color}:{label:string;value:number;total:number;color:string})=>{
-    const pct=Math.round(value/total*100)
+function computeStats(ataques: Ataque[]) {
+  const total = ataques.length
+  const qual = { boa:0, media:0, ruim:0 }
+  const tipo = { cabeca:0, shark:0 }
+  const prof = { frente:0, meio:0, fundo:0 }
+  const zoneCounts: Record<string,number> = {}
+  ataques.forEach(a=>{
+    qual[a.qualidade]++; tipo[a.tipo]++
+    const col = ZONE_COL[a.zona]
+    if (col===0) prof.frente++; else if (col===1) prof.meio++; else prof.fundo++
+    zoneCounts[a.zona] = (zoneCounts[a.zona]||0)+1
+  })
+  const zonas = (Object.keys(zoneCounts) as Zona[])
+    .map(z=>({ z, n: ZONE_FULL[z], t: zoneCounts[z], pct: total ? +(zoneCounts[z]/total*100).toFixed(1) : 0 }))
+    .sort((a,b)=> b.t - a.t)
+    .map((z,i)=>({ ...z, pref: i===0 && z.t>0 }))
+  return { total, qual, tipo, prof, zonas }
+}
+
+function DashboardTab({ ataques }: { ataques: Ataque[] }) {
+  const stats = useMemo(()=>computeStats(ataques),[ataques])
+  const total = stats.total
+  const sc=[
+    {l:'Total',v:total,c:'text-[#F0A500]'},
+    {l:'Boas',v:stats.qual.boa,c:'text-green-400'},
+    {l:'Médias',v:stats.qual.media,c:'text-orange-400'},
+    {l:'Ruins',v:stats.qual.ruim,c:'text-red-400'},
+    {l:'Cabeça',v:stats.tipo.cabeca,c:'text-cyan-400'},
+    {l:'Shark',v:stats.tipo.shark,c:'text-purple-400'},
+  ]
+  const BarRow=({label,value,color}:{label:string;value:number;color:string})=>{
+    const pct = total ? Math.round(value/total*100) : 0
     return(<div className="flex items-center gap-2 mb-2"><span className="text-[11px] text-white/60 w-20 flex-shrink-0">{label}</span><div className="flex-1 bg-white/8 rounded-full h-1.5 overflow-hidden"><div className="h-full rounded-full" style={{width:`${pct}%`,background:color}}/></div><span className="text-[10px] text-white/30 w-8 text-right">{pct}%</span></div>)
   }
   const card='bg-[#0f1626] rounded-xl px-4 py-3 shadow-[0_4px_20px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)]'
   const sec='text-[10px] text-white/40 uppercase tracking-wide mb-3'
+
+  if (total===0) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-4">
+        <div className={`${card} flex flex-col items-center justify-center py-16 text-center`}>
+          <div className="w-14 h-14 rounded-2xl bg-white/5 flex items-center justify-center mb-4">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M18 9l-5 5-3-3-4 4"/></svg>
+          </div>
+          <p className="text-white/60 text-sm font-medium mb-1">Sem dados ainda</p>
+          <p className="text-white/30 text-xs">Registre ataques na aba ao lado para ver as estatísticas.</p>
+        </div>
+      </div>
+    )
+  }
+
   return(
     <div className="max-w-2xl mx-auto px-4 py-4 space-y-3">
       <div className="grid grid-cols-3 gap-2">{sc.map(s=><div key={s.l} className="bg-[#0f1626] rounded-xl p-3 text-center shadow-[0_4px_20px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)]"><p className={`text-xl font-medium ${s.c}`}>{s.v}</p><p className="text-[10px] text-white/30 mt-0.5">{s.l}</p></div>)}</div>
-      <div className={card}><p className={sec}>Mapa de ataques</p><div className="flex flex-wrap gap-3 mb-3 text-[10px] text-white/50 items-center"><div className="flex items-center gap-1.5"><svg width="20" height="6"><line x1="0" y1="3" x2="16" y2="3" stroke="#F0A500" strokeWidth="1.5"/><circle cx="18" cy="3" r="2" fill="#F0A500"/></svg>Cabeça</div><div className="flex items-center gap-1.5"><svg width="20" height="6"><line x1="0" y1="3" x2="16" y2="3" stroke="#a855f7" strokeWidth="1.5"/><circle cx="18" cy="3" r="2" fill="#a855f7"/></svg>Shark</div><span className="text-white/20">·</span>{([['#22c55e','Boa'],['#f97316','Média'],['#ef4444','Ruim']] as [string,string][]).map(([c,l])=><div key={l} className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{background:c}}/>{l}</div>)}</div><MapaCanvas ataques={DEMO_ATAQUES}/></div>
-      <div className={card}><p className={sec}>Profundidade</p><BarRow label="Frente (1-3)" value={stats.prof.frente} total={25} color="#ef4444"/><BarRow label="Meio (4-6)" value={stats.prof.meio} total={25} color="#f97316"/><BarRow label="Fundo (7-9)" value={stats.prof.fundo} total={25} color="#22c55e"/></div>
-      <div className={card}><p className={sec}>Qualidade</p><BarRow label="Boa" value={stats.qual.boa} total={25} color="#16a34a"/><BarRow label="Média" value={stats.qual.media} total={25} color="#ea580c"/><BarRow label="Ruim" value={stats.qual.ruim} total={25} color="#dc2626"/></div>
-      <div className={card}><p className={sec}>Tipo</p><BarRow label="Cabeça" value={stats.tipo.cabeca} total={25} color="#F0A500"/><BarRow label="Shark" value={stats.tipo.shark} total={25} color="#a855f7"/></div>
+      <div className={card}><p className={sec}>Mapa de ataques</p><div className="flex flex-wrap gap-3 mb-3 text-[10px] text-white/50 items-center"><div className="flex items-center gap-1.5"><svg width="20" height="6"><line x1="0" y1="3" x2="16" y2="3" stroke="#F0A500" strokeWidth="1.5"/><circle cx="18" cy="3" r="2" fill="#F0A500"/></svg>Cabeça</div><div className="flex items-center gap-1.5"><svg width="20" height="6"><line x1="0" y1="3" x2="16" y2="3" stroke="#a855f7" strokeWidth="1.5"/><circle cx="18" cy="3" r="2" fill="#a855f7"/></svg>Shark</div><span className="text-white/20">·</span>{([['#22c55e','Boa'],['#f97316','Média'],['#ef4444','Ruim']] as [string,string][]).map(([c,l])=><div key={l} className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{background:c}}/>{l}</div>)}</div><MapaCanvas ataques={ataques}/></div>
+      <div className={card}><p className={sec}>Profundidade</p><BarRow label="Frente (1-3)" value={stats.prof.frente} color="#ef4444"/><BarRow label="Meio (4-6)" value={stats.prof.meio} color="#f97316"/><BarRow label="Fundo (7-9)" value={stats.prof.fundo} color="#22c55e"/></div>
+      <div className={card}><p className={sec}>Qualidade</p><BarRow label="Boa" value={stats.qual.boa} color="#16a34a"/><BarRow label="Média" value={stats.qual.media} color="#ea580c"/><BarRow label="Ruim" value={stats.qual.ruim} color="#dc2626"/></div>
+      <div className={card}><p className={sec}>Tipo</p><BarRow label="Cabeça" value={stats.tipo.cabeca} color="#F0A500"/><BarRow label="Shark" value={stats.tipo.shark} color="#a855f7"/></div>
       <div className={card}><p className={sec}>Por zona</p><table className="w-full border-collapse"><thead><tr><th className="text-left text-[10px] text-white/30 pb-2 font-medium">Zona</th><th className="text-right text-[10px] text-white/30 pb-2 font-medium">Ataques</th><th className="text-right text-[10px] text-white/30 pb-2 font-medium">%</th></tr></thead><tbody className="divide-y divide-white/5">{stats.zonas.map(z=><tr key={z.z}><td className="py-2 text-[11px] text-white/70">{z.z} — {z.n}{z.pref&&<span className="ml-1.5 text-[9px] bg-[#F0A500]/15 text-[#F0A500] px-1.5 py-0.5 rounded-full">preferida</span>}</td><td className="py-2 text-right text-[11px] font-medium text-white/70">{z.t}</td><td className="py-2 text-right text-[10px] text-white/30">{z.pct}%</td></tr>)}</tbody></table></div>
     </div>
   )
 }
 
 /* ── Match Screen ──────────────────────────────────────────────────── */
-function MatchScreen({ partida, onBack }: { partida: Partida; onBack: () => void }) {
-  const [tab, setTab] = useState<'reg'|'dash'>('reg')
+function MatchScreen({ partida, onBack }: { partida: PartidaDTO; onBack: () => void }) {
+  const [tab, setTab]           = useState<'reg'|'dash'>('reg')
+  const [loading, setLoading]   = useState(true)
+  const [error, setError]       = useState<string|null>(null)
+  const [status, setStatus]     = useState<Status>(partida.status)
+  const [tempo, setTempo]       = useState(partida.tempo)
+  const [liveSecs, setLiveSecs] = useState(partida.tempo)
+  const [sets, setSets]         = useState<SetDTO[]>([])
+  const [lancamentos, setLancamentos] = useState<LancamentoDTO[]>([])
+  const liveSecsRef = useRef(partida.tempo)
+
+  const handleTick = useCallback((s: number) => { liveSecsRef.current = s; setLiveSecs(s) }, [])
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const detail = await partidasService.get(partida.id)
+        if (!alive) return
+        setStatus(detail.status); setTempo(detail.tempo)
+        liveSecsRef.current = detail.tempo; setLiveSecs(detail.tempo)
+        setSets(detail.sets)
+        setLancamentos(detail.lancamentos.slice().reverse()) // mais recentes primeiro
+      } catch (e) {
+        if (alive) setError(apiErrorMessage(e))
+      } finally {
+        if (alive) setLoading(false)
+      }
+    })()
+    return () => { alive = false }
+  }, [partida.id])
+
+  const ataques = useMemo(()=>lancamentos.map(toAtaque),[lancamentos])
+
+  async function patchPartida(payload: Parameters<typeof partidasService.update>[1]) {
+    try {
+      const updated = await partidasService.update(partida.id, payload)
+      setStatus(updated.status); setTempo(updated.tempo)
+    } catch (e) {
+      setError(apiErrorMessage(e))
+    }
+  }
+
+  async function handleFinalizeSet(nos: number, them: number) {
+    const decorrido = sets.reduce((acc, s) => acc + s.tempo, 0)
+    const tempoSet = Math.max(0, liveSecsRef.current - decorrido)
+    try {
+      const s = await partidaSetsService.add(partida.id, { pontos_jogador: nos, pontos_adversario: them, tempo: tempoSet })
+      setSets(prev => [...prev, s])
+    } catch (e) {
+      setError(apiErrorMessage(e)); throw e
+    }
+  }
+
+  async function handleRegister(payload: { tipo: Tipo; qualidade: Qual; pos_x: number; pos_y: number; zona: Zona }) {
+    try {
+      const l = await partidaLancamentosService.add(partida.id, payload)
+      setLancamentos(prev => [l, ...prev])
+    } catch (e) {
+      setError(apiErrorMessage(e)); throw e
+    }
+  }
+
+  async function handleUndo(id: string) {
+    try {
+      await partidaLancamentosService.remove(partida.id, id)
+      setLancamentos(prev => prev.filter(l => l.id !== id))
+    } catch (e) {
+      setError(apiErrorMessage(e)); throw e
+    }
+  }
+
+  async function handleReopen() {
+    setTab('reg')
+    await patchPartida({ status: 'prog' })
+  }
+
+  const isFinished = status === 'done'
   const tabCls = (active: boolean) =>
     `flex-1 py-3 text-center text-xs font-medium border-b-2 transition-colors ${active?'border-[#F0A500] text-[#F0A500]':'border-transparent text-white/40 hover:text-white/60'}`
+
   return (
     <div className="min-h-screen bg-[#080c14]">
+      <ErrorToast message={error} onDone={()=>setError(null)} />
       <Navbar onBack={onBack} title={partida.jogador} sub={`vs ${partida.adversario||'—'} · ${partida.lado}`} />
-      <TimerStrip />
-      <PlacarSection jogador={partida.jogador} adversario={partida.adversario} />
-      <div className="flex bg-[#0f1626] shadow-[0_1px_0_rgba(255,255,255,0.04),0_4px_12px_rgba(0,0,0,0.4)]">
-        <button onClick={()=>setTab('reg')} className={tabCls(tab==='reg')}>Registrar ataques</button>
-        <button onClick={()=>setTab('dash')} className={tabCls(tab==='dash')}>Dashboard</button>
-      </div>
-      {tab==='reg'?<RegistrarTab/>:<DashboardTab/>}
+      {loading ? (
+        <div className="flex items-center justify-center py-24">
+          <div className="w-6 h-6 border-2 border-[#F0A500] border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : (
+        <>
+          <TimerStrip
+            initialSecs={tempo}
+            initialFinished={isFinished}
+            onStart={()=>patchPartida({ status:'prog' })}
+            onPersist={(secs)=>patchPartida({ tempo: secs })}
+            onFinish={(secs)=>patchPartida({ status:'done', tempo: secs })}
+            onTick={handleTick}
+          />
+          <PlacarSection jogador={partida.jogador} adversario={partida.adversario} sets={sets} tempoTotal={liveSecs} readOnly={isFinished} onFinalizeSet={handleFinalizeSet} />
+          {isFinished ? (
+            <>
+              <div className="bg-[#0f1626] px-4 py-3 flex items-center justify-between gap-3 shadow-[0_1px_0_rgba(255,255,255,0.04),0_4px_12px_rgba(0,0,0,0.4)]">
+                <div className="flex items-center gap-2 text-[11px] text-yellow-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
+                  Partida finalizada — somente leitura
+                </div>
+                <button onClick={handleReopen} className="bg-green-600 text-white text-xs font-medium px-4 py-2 rounded-lg flex items-center gap-1.5 hover:bg-green-700 active:scale-95 transition-all">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+                  Iniciar novamente
+                </button>
+              </div>
+              <DashboardTab ataques={ataques} />
+            </>
+          ) : (
+            <>
+              <div className="flex bg-[#0f1626] shadow-[0_1px_0_rgba(255,255,255,0.04),0_4px_12px_rgba(0,0,0,0.4)]">
+                <button onClick={()=>setTab('reg')} className={tabCls(tab==='reg')}>Registrar ataques</button>
+                <button onClick={()=>setTab('dash')} className={tabCls(tab==='dash')}>Dashboard</button>
+              </div>
+              {tab==='reg'
+                ? <RegistrarTab ataques={ataques} onRegister={handleRegister} onUndo={handleUndo} />
+                : <DashboardTab ataques={ataques} />}
+            </>
+          )}
+        </>
+      )}
     </div>
   )
 }
 
 /* ── Home Screen ───────────────────────────────────────────────────── */
-function HomeScreen({ onOpen }: { onOpen: (p: Partida) => void }) {
-  const [partidas, setPartidas] = useState<Partida[]>([])
-  const [filtro, setFiltro]     = useState<'all'|Status>('all')
+function HomeScreen({ onOpen }: { onOpen: (p: PartidaDTO) => void }) {
+  const me = useAuthStore((s) => s.user)
+  const isAdmin = me?.role === 'admin'
+  const [partidas, setPartidas]   = useState<PartidaDTO[]>([])
+  const [filtro, setFiltro]       = useState<'all'|Status>('all')
+  const [userFiltro, setUserFiltro] = useState<string>('all')   // 'all' ou user_id (admin)
   const [modalOpen, setModalOpen] = useState(false)
+  const [loading, setLoading]     = useState(true)
+  const [error, setError]         = useState<string|null>(null)
+  const [menuOpen, setMenuOpen]   = useState(false)
+  const novaPartidaPendente = useUIStore((s) => s.novaPartidaPendente)
+  const limparNovaPartida   = useUIStore((s) => s.limparNovaPartida)
 
-  const counts = { all:partidas.length, wait:partidas.filter(p=>p.status==='wait').length, prog:partidas.filter(p=>p.status==='prog').length, done:partidas.filter(p=>p.status==='done').length }
-  const filtered = filtro==='all'?partidas:partidas.filter(p=>p.status===filtro)
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const res = await partidasService.list()
+        if (alive) setPartidas(res.data)
+      } catch (e) {
+        if (alive) setError(apiErrorMessage(e))
+      } finally {
+        if (alive) setLoading(false)
+      }
+    })()
+    return () => { alive = false }
+  }, [])
+
+  // abre o modal "Nova partida" quando solicitado pelo menu lateral (funciona já estando em /partidas)
+  useEffect(() => {
+    if (novaPartidaPendente) { setModalOpen(true); limparNovaPartida() }
+  }, [novaPartidaPendente, limparNovaPartida])
+
+  async function handleCreate(payload: { jogador: string; adversario: string; fase: string; lado: Lado; data: string }) {
+    try {
+      const nova = await partidasService.create({
+        jogador: payload.jogador, fase: payload.fase, lado: payload.lado,
+        adversario: payload.adversario || null, data: payload.data || null,
+      })
+      setPartidas(prev => [nova, ...prev])
+    } catch (e) {
+      setError(apiErrorMessage(e)); throw e
+    }
+  }
+
+  async function handleDelete(id: string) {
+    const snapshot = partidas
+    setPartidas(p => p.filter(x => x.id !== id)) // otimista
+    try {
+      await partidasService.remove(id)
+    } catch (e) {
+      setPartidas(snapshot); setError(apiErrorMessage(e))
+    }
+  }
+
+  // Admin: lista de usuários disponíveis (derivada das partidas; próprio admin primeiro)
+  const usuarios: { id: string; nome: string }[] = []
+  if (isAdmin) {
+    const seen = new Set<string>()
+    for (const p of partidas) {
+      if (!seen.has(p.user_id)) { seen.add(p.user_id); usuarios.push({ id: p.user_id, nome: p.user_name || 'Usuário' }) }
+    }
+    const i = usuarios.findIndex(u => u.id === me?.id)
+    if (i > 0) usuarios.unshift(usuarios.splice(i, 1)[0])
+  }
+
+  // escopo = partidas do usuário selecionado (admin) ou todas
+  const escopo = (isAdmin && userFiltro !== 'all') ? partidas.filter(p => p.user_id === userFiltro) : partidas
+  const counts = { all:escopo.length, wait:escopo.filter(p=>p.status==='wait').length, prog:escopo.filter(p=>p.status==='prog').length, done:escopo.filter(p=>p.status==='done').length }
+  const filtered = filtro==='all'?escopo:escopo.filter(p=>p.status===filtro)
   const tabs: {key:'all'|Status;label:string}[] = [{key:'all',label:'Tudo'},{key:'wait',label:'Aguardando'},{key:'prog',label:'Em progresso'},{key:'done',label:'Finalizada'}]
   const badgeActive: Record<string,string> = {all:'bg-white/20 text-white',wait:'bg-amber-900/60 text-amber-300',prog:'bg-green-900/60 text-green-300',done:'bg-yellow-900/60 text-yellow-300'}
 
+  // Admin: agrupa as partidas por usuário (preservando a ordem de chegada)
+  const grupos: { id: string; nome: string; partidas: PartidaDTO[] }[] = []
+  if (isAdmin) {
+    const idx = new Map<string, number>()
+    for (const p of filtered) {
+      if (!idx.has(p.user_id)) { idx.set(p.user_id, grupos.length); grupos.push({ id: p.user_id, nome: p.user_name || 'Usuário', partidas: [] }) }
+      grupos[idx.get(p.user_id)!].partidas.push(p)
+    }
+    // mantém as partidas do próprio admin como o primeiro grupo
+    const meuIdx = grupos.findIndex(g => g.id === me?.id)
+    if (meuIdx > 0) grupos.unshift(grupos.splice(meuIdx, 1)[0])
+  }
+
+  const emptyState = (
+    <div className="flex flex-col items-center justify-center py-20 text-center">
+      <div className="w-14 h-14 rounded-2xl bg-white/5 flex items-center justify-center mb-4">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M8 2v4M16 2v4"/>
+        </svg>
+      </div>
+      <p className="text-white/60 text-sm font-medium mb-1">
+        {filtro==='all' ? 'Nenhuma partida ainda' : 'Nenhuma partida encontrada'}
+      </p>
+      <p className="text-white/30 text-xs">
+        {filtro==='all'
+          ? 'Crie sua primeira partida para começar a registrar ataques.'
+          : 'Nenhuma partida com esse status no momento.'}
+      </p>
+    </div>
+  )
+
   return (
     <div className="min-h-screen bg-[#080c14]">
-      <Navbar />
+      <ErrorToast message={error} onDone={()=>setError(null)} />
+      <Sidebar open={menuOpen} onClose={()=>setMenuOpen(false)} />
+      <Navbar onMenu={()=>setMenuOpen(true)} />
       <div className="max-w-5xl mx-auto px-4 py-6">
         <div className="flex items-center justify-between mb-5">
           <h1 className="text-xl font-semibold text-white">Partidas</h1>
@@ -549,7 +820,7 @@ function HomeScreen({ onOpen }: { onOpen: (p: Partida) => void }) {
             Nova partida
           </button>
         </div>
-        <div className="flex gap-2 flex-wrap mb-5">
+        <div className="flex gap-2 flex-wrap items-center mb-5">
           {tabs.map(t=>(
             <button key={t.key} onClick={()=>setFiltro(t.key)} className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all ${filtro===t.key?'bg-[#F0A500] text-white':'bg-white/5 border border-white/10 text-white/50 hover:border-white/20'}`}>
               {t.label}
@@ -558,29 +829,53 @@ function HomeScreen({ onOpen }: { onOpen: (p: Partida) => void }) {
               </span>
             </button>
           ))}
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filtered.map(p=><PartidaCard key={p.id} p={p} onOpen={onOpen} onDelete={id=>setPartidas(prev=>prev.filter(x=>x.id!==id))} />)}
-        </div>
-        {filtered.length===0&&(
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-white/5 flex items-center justify-center mb-4">
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M8 2v4M16 2v4"/>
-              </svg>
+          {isAdmin && (
+            <div className="flex items-center gap-1.5 ml-auto">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <select value={userFiltro} onChange={e=>setUserFiltro(e.target.value)}
+                className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white/80 outline-none focus:border-[#F0A500]/60 transition-colors cursor-pointer">
+                <option value="all" className="bg-[#0f1626]">Todos os usuários</option>
+                {usuarios.map(u=>(
+                  <option key={u.id} value={u.id} className="bg-[#0f1626]">{u.nome}{u.id===me?.id?' (você)':''}</option>
+                ))}
+              </select>
             </div>
-            <p className="text-white/60 text-sm font-medium mb-1">
-              {filtro==='all' ? 'Nenhuma partida ainda' : 'Nenhuma partida encontrada'}
-            </p>
-            <p className="text-white/30 text-xs">
-              {filtro==='all'
-                ? 'Crie sua primeira partida para começar a registrar ataques.'
-                : 'Nenhuma partida com esse status no momento.'}
-            </p>
+          )}
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="w-6 h-6 border-2 border-[#F0A500] border-t-transparent rounded-full animate-spin" />
           </div>
+        ) : isAdmin ? (
+          grupos.length===0 ? emptyState : (
+            <div className="space-y-6">
+              {grupos.map(g=>(
+                <div key={g.id}>
+                  <div className="flex items-center gap-2 mb-2.5">
+                    <div className="w-6 h-6 rounded-full bg-[#F0A500]/15 flex items-center justify-center text-[#F0A500] text-[10px] font-medium">
+                      {g.nome.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}
+                    </div>
+                    <p className="text-sm text-white/75 font-medium">{g.nome}</p>
+                    {g.id===me?.id && <span className="text-[9px] bg-[#F0A500]/15 text-[#F0A500] px-1.5 py-0.5 rounded-full">você</span>}
+                    <span className="text-[10px] text-white/30 bg-white/5 px-2 py-0.5 rounded-full">{g.partidas.length} partida(s)</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {g.partidas.map(p=><PartidaCard key={p.id} p={p} onOpen={onOpen} onDelete={handleDelete} />)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        ) : (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {filtered.map(p=><PartidaCard key={p.id} p={p} onOpen={onOpen} onDelete={handleDelete} />)}
+            </div>
+            {filtered.length===0 && emptyState}
+          </>
         )}
       </div>
-      {modalOpen&&<ModalNovaPartida onClose={()=>setModalOpen(false)} onCreate={nova=>{setPartidas(prev=>[nova,...prev]);setModalOpen(false)}} />}
+      {modalOpen&&<ModalNovaPartida onClose={()=>setModalOpen(false)} onCreate={handleCreate} />}
     </div>
   )
 }
@@ -591,7 +886,7 @@ export default function PartidasPage() {
   const user   = useAuthStore((s) => s.user)
   const [ready, setReady] = useState(false)
   const [screen, setScreen]           = useState<'home'|'match'>('home')
-  const [activePartida, setActivePartida] = useState<Partida|null>(null)
+  const [activePartida, setActivePartida] = useState<PartidaDTO|null>(null)
 
   useEffect(() => { setReady(true) }, [])
   useEffect(() => {

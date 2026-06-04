@@ -25,6 +25,15 @@ api.interceptors.response.use(
   }
 )
 
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/+$/, '')
+
+/** Resolve um caminho de mídia da API (ex: /api/static/avatars/x.png) para URL absoluta. */
+export function mediaUrl(path?: string | null): string {
+  if (!path) return ''
+  if (/^https?:\/\//.test(path) || path.startsWith('data:')) return path
+  return `${API_BASE}/${path.replace(/^\/+/, '')}`
+}
+
 export function apiErrorMessage(err: unknown, fallback = 'Algo deu errado. Tente novamente.'): string {
   if (axios.isAxiosError(err)) {
     return (err as ApiError).response?.data?.detail ?? fallback

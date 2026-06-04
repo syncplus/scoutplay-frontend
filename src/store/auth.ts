@@ -11,6 +11,7 @@ interface AuthState {
   isLoading:    boolean
   login:        (identifier: string, password: string) => Promise<void>
   logout:       () => void
+  updateUser:   (patch: Partial<User>) => void
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -33,9 +34,10 @@ export const useAuthStore = create<AuthState>()(
               id:       res.user_id,
               name:     res.name,
               username: res.username,
-              email:    '',
+              email:    res.email ?? '',
               role:     res.role,
               active:   true,
+              photo:    res.photo ?? null,
             },
             isLoading: false,
           })
@@ -49,6 +51,8 @@ export const useAuthStore = create<AuthState>()(
         tokenManager.set(null)
         set({ user: null, accessToken: null, refreshToken: null })
       },
+
+      updateUser: (patch) => set((s) => ({ user: s.user ? { ...s.user, ...patch } : s.user })),
     }),
     {
       name:    'scoutplay-auth',

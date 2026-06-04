@@ -7,6 +7,7 @@ export interface User {
   email:    string
   role:     UserRole
   active:   boolean
+  photo?:   string | null
 }
 
 export interface LoginResponse {
@@ -17,6 +18,8 @@ export interface LoginResponse {
   name:          string
   username:      string
   role:          UserRole
+  email?:        string
+  photo?:        string | null
 }
 
 export interface RefreshResponse {
