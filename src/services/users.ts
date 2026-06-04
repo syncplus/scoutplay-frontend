@@ -35,7 +35,7 @@ export interface UpdateMePayload {
   password?: string
 }
 
-const BASE = '/api/v1/user'
+const BASE = '/user'
 
 export const usersService = {
   async list(): Promise<{ data: UserOut[]; total: number }> {
