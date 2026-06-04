@@ -884,16 +884,15 @@ function HomeScreen({ onOpen }: { onOpen: (p: PartidaDTO) => void }) {
 export default function PartidasPage() {
   const router = useRouter()
   const user   = useAuthStore((s) => s.user)
-  const [ready, setReady] = useState(false)
+  const hasHydrated = useAuthStore((s) => s.hasHydrated)
   const [screen, setScreen]           = useState<'home'|'match'>('home')
   const [activePartida, setActivePartida] = useState<PartidaDTO|null>(null)
 
-  useEffect(() => { setReady(true) }, [])
   useEffect(() => {
-    if (ready && !user) router.replace('/auth/login')
-  }, [ready, user, router])
+    if (hasHydrated && !user) router.replace('/auth/login')
+  }, [hasHydrated, user, router])
 
-  if (!ready || !user) {
+  if (!hasHydrated || !user) {
     return (
       <div className="min-h-screen bg-[#080c14] flex items-center justify-center">
         <div className="w-6 h-6 border-2 border-[#F0A500] border-t-transparent rounded-full animate-spin" />

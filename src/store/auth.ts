@@ -9,6 +9,8 @@ interface AuthState {
   accessToken:  string | null
   refreshToken: string | null
   isLoading:    boolean
+  hasHydrated:  boolean
+  setHasHydrated: (hasHydrated: boolean) => void
   login:        (identifier: string, password: string) => Promise<void>
   logout:       () => void
   updateUser:   (patch: Partial<User>) => void
@@ -21,6 +23,8 @@ export const useAuthStore = create<AuthState>()(
       accessToken:  null,
       refreshToken: null,
       isLoading:    false,
+      hasHydrated:  false,
+      setHasHydrated: (hasHydrated) => set({ hasHydrated }),
 
       login: async (identifier, password) => {
         set({ isLoading: true })
@@ -57,6 +61,10 @@ export const useAuthStore = create<AuthState>()(
     {
       name:    'scoutplay-auth',
       storage: createJSONStorage(() => localStorage),
+      onRehydrateStorage: (initialState) => (state) => {
+        tokenManager.set(state?.accessToken ?? null)
+        ;(state ?? initialState)?.setHasHydrated(true)
+      },
       partialize: (state) => ({
         user:         state.user,
         accessToken:  state.accessToken,
@@ -69,4 +77,8 @@ export const useAuthStore = create<AuthState>()(
 // Sync token on every state change (covers rehydration from localStorage)
 useAuthStore.subscribe((state) => {
   tokenManager.set(state.accessToken)
+})
+
+tokenManager.onUnauthorized(() => {
+  useAuthStore.getState().logout()
 })

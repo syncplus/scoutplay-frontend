@@ -1,21 +1,18 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuthStore } from '@/store/auth'
 
 export default function RootPage() {
   const router = useRouter()
-  const user   = useAuthStore((s) => s.user)
-  const [ready, setReady] = useState(false)
-
-  // Aguarda a hidratação do Zustand (localStorage é só client-side)
-  useEffect(() => { setReady(true) }, [])
+  const user = useAuthStore((s) => s.user)
+  const hasHydrated = useAuthStore((s) => s.hasHydrated)
 
   useEffect(() => {
-    if (!ready) return
+    if (!hasHydrated) return
     router.replace(user ? '/partidas' : '/auth/login')
-  }, [ready, user, router])
+  }, [hasHydrated, user, router])
 
   return (
     <div className="min-h-screen bg-[#080c14] flex items-center justify-center">

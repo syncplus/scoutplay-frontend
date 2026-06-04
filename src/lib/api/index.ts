@@ -17,9 +17,13 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error: ApiError) => {
-    if (error.response?.status === 401 && typeof window !== 'undefined') {
-      tokenManager.set(null)
-      window.location.href = '/auth/login'
+    const requestUrl = error.config?.url ?? ''
+    const isLoginRequest = requestUrl.includes('/auth/login')
+    if (error.response?.status === 401 && !isLoginRequest && typeof window !== 'undefined') {
+      tokenManager.handleUnauthorized()
+      if (window.location.pathname !== '/auth/login') {
+        window.location.replace('/auth/login')
+      }
     }
     return Promise.reject(error)
   }

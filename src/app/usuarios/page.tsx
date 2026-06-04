@@ -109,8 +109,8 @@ function UserModal({ alvo, onClose, onSaved, onError }: {
 export default function UsuariosPage() {
   const router = useRouter()
   const me = useAuthStore((s) => s.user)
+  const hasHydrated = useAuthStore((s) => s.hasHydrated)
 
-  const [ready, setReady]       = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [loading, setLoading]   = useState(true)
   const [users, setUsers]       = useState<UserOut[]>([])
@@ -119,14 +119,14 @@ export default function UsuariosPage() {
   const [error, setError]       = useState<string|null>(null)
   const [notice, setNotice]     = useState<string|null>(null)
 
-  useEffect(() => { setReady(true) }, [])
   useEffect(() => {
-    if (!ready) return
+    if (!hasHydrated) return
     if (!me) { router.replace('/auth/login'); return }
     if (me.role !== 'admin') { router.replace('/partidas') }
-  }, [ready, me, router])
+  }, [hasHydrated, me, router])
 
   useEffect(() => {
+    if (!hasHydrated || !me || me.role !== 'admin') return
     let alive = true
     ;(async () => {
       try {
@@ -139,14 +139,14 @@ export default function UsuariosPage() {
       }
     })()
     return () => { alive = false }
-  }, [])
+  }, [hasHydrated, me])
 
   function handleSaved(u: UserOut, criado: boolean) {
     setUsers(prev => criado ? [u, ...prev] : prev.map(x => x.id === u.id ? u : x))
     setNotice(criado ? `Usuário "${u.name}" criado` : `Usuário "${u.name}" atualizado`)
   }
 
-  if (!ready || !me || me.role !== 'admin') {
+  if (!hasHydrated || !me || me.role !== 'admin') {
     return <div className="min-h-screen bg-[#080c14] flex items-center justify-center"><div className="w-6 h-6 border-2 border-[#F0A500] border-t-transparent rounded-full animate-spin" /></div>
   }
 

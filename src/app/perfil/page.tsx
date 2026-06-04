@@ -13,9 +13,9 @@ import { Toast } from '@/components/Toast'
 export default function PerfilPage() {
   const router = useRouter()
   const user = useAuthStore((s) => s.user)
+  const hasHydrated = useAuthStore((s) => s.hasHydrated)
   const updateUser = useAuthStore((s) => s.updateUser)
 
-  const [ready, setReady]       = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [loading, setLoading]   = useState(true)
   const [saving, setSaving]     = useState(false)
@@ -30,10 +30,10 @@ export default function PerfilPage() {
   const [avatarData, setAvatarData] = useState<string|null>(null) // dataURL nova (preview/upload)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { setReady(true) }, [])
-  useEffect(() => { if (ready && !user) router.replace('/auth/login') }, [ready, user, router])
+  useEffect(() => { if (hasHydrated && !user) router.replace('/auth/login') }, [hasHydrated, user, router])
 
   useEffect(() => {
+    if (!hasHydrated || !user) return
     let alive = true
     ;(async () => {
       try {
@@ -48,7 +48,7 @@ export default function PerfilPage() {
       }
     })()
     return () => { alive = false }
-  }, [])
+  }, [hasHydrated, user, updateUser])
 
   function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -84,7 +84,7 @@ export default function PerfilPage() {
     }
   }
 
-  if (!ready || !user) {
+  if (!hasHydrated || !user) {
     return <div className="min-h-screen bg-[#080c14] flex items-center justify-center"><div className="w-6 h-6 border-2 border-[#F0A500] border-t-transparent rounded-full animate-spin" /></div>
   }
 
