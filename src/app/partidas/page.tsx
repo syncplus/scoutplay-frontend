@@ -41,7 +41,7 @@ const ZONE_FULL: Record<Zona,string> = {
   Z7:'LP (Largada Paralela)', Z8:'MF (Meio Fundo)', Z9:'DL (Diagonal Longa)',
 }
 const QUAL_COLORS: Record<Qual,string>  = { boa:'#22c55e', media:'#f97316', ruim:'#ef4444' }
-const TIPO_STROKE: Record<Tipo,string>  = { cabeca:'#F0A500', shark:'#a855f7' }
+const TIPO_STROKE: Record<Tipo,string>  = { cabeca:'#06b6d4', shark:'#a855f7' }
 const QUAL_LABEL:  Record<Qual,string>  = { boa:'Boa', media:'Média', ruim:'Ruim' }
 const TIPO_LABEL:  Record<Tipo,string>  = { cabeca:'Cabeça', shark:'Shark' }
 const MESES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez']
