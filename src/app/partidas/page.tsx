@@ -91,7 +91,7 @@ function ModalNovaPartida({ onClose, onCreate }: { onClose: () => void; onCreate
         <div className="px-5 py-4 space-y-4">
           <div>
             <label className="text-[11px] text-white/40 uppercase tracking-wide block mb-1.5">Jogador / Dupla analisada</label>
-            <input className={inputCls} placeholder="Ex: Avatar e Gaúcho" value={jogador} onChange={e=>setJogador(e.target.value)} />
+            <input className={inputCls} placeholder="Ex: Iago e Beguinha" value={jogador} onChange={e=>setJogador(e.target.value)} />
           </div>
           <div>
             <label className="text-[11px] text-white/40 uppercase tracking-wide block mb-1.5">Partida / Fase</label>
